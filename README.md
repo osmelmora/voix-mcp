@@ -111,7 +111,7 @@ Use [mise](https://mise.jdx.dev) to install and activate the Bun, Node.js, hk, P
 
 Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The CI workflow checks commit messages, linting, formatting, types, and tests on every push to `main` and every pull request; the release workflow repeats those checks before building.
 
-[Dillon Mulroy's anti-slop rules](https://github.com/dmmulroy/anti-slop) run alongside Ultracite: all 18 generic rules, all five Effect rules, and `oxc/no-accumulating-spread` are errors. The plugins are vendored in `tools/oxlint/anti-slop/`; their source revision and licenses are recorded there. Keep `oxlint` and `@oxlint/plugins` pinned to the same version when upgrading. Apply lint and formatting fixes with `bun run fix`, then verify the result with `bun run check`.
+[Dillon Mulroy's anti-slop rules](https://github.com/dmmulroy/anti-slop) run alongside Ultracite: all 18 generic rules, all five Effect rules, and `oxc/no-accumulating-spread` are errors. See [the vendoring record](tools/oxlint/anti-slop/UPSTREAM.md) for provenance, licenses, and update guidance. Keep `oxlint` and `@oxlint/plugins` pinned to the same version when upgrading.
 
 Cyclomatic complexity is capped at 15 per function, overriding Ultracite's default limit of 20.
 
