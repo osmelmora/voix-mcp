@@ -1,0 +1,38 @@
+amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Builtins.pkl"
+
+// Binaries come from node_modules/.bin, which mise puts on PATH.
+// Declared per hook rather than as top-level `steps`, which hk would also
+// merge into commit-msg.
+local linters = new Mapping<String, Step> {
+  ["oxlint"] = Builtins.ox_lint
+  ["oxfmt"] = Builtins.oxfmt
+  ["tsc"] = Builtins.tsc
+}
+
+hooks {
+  ["check"] { steps = linters }
+  ["fix"] {
+    fix = true
+    steps = linters
+  }
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps = linters
+  }
+  ["commit-msg"] {
+    steps {
+      ["conventional-commit"] = Builtins.check_conventional_commit
+    }
+  }
+  ["pre-push"] {
+    steps = (linters) {
+      ["test"] {
+        depends = List("oxlint", "oxfmt", "tsc")
+        check = "bun test"
+        env { ["VOIX_PLAYER"] = "none" }
+      }
+    }
+  }
+}

@@ -100,15 +100,19 @@ There is no config file. Defaults: voice `af_heart`, speed `1.0`.
 
 ## Development
 
-Use [mise](https://mise.jdx.dev) to install and activate the Bun and Node.js versions pinned in `mise.toml`. Node runs the lint and format tooling. The release workflow uses the same mise configuration.
+Use [mise](https://mise.jdx.dev) to install and activate the Bun, Node.js, hk, Pkl, and cocogitto versions pinned in `mise.toml`. Node runs the lint and format tooling. mise also puts `node_modules/.bin` on `PATH`. The release workflow uses the same mise configuration.
 
 Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The release workflow checks linting and formatting before building.
+
+Git hooks run through [hk](https://hk.jdx.dev), configured in `hk.pkl`. The pre-commit hook runs Oxlint, Oxfmt, and `tsc` on staged files and stages automatic fixes. The commit-msg hook requires [Conventional Commits](https://www.conventionalcommits.org) subjects such as `feat(mcp): add stop tool`. The pre-push hook runs the same checks and the tests. Run `hk check --all` to check everything at once, or `hk fix --all` to apply fixes. Set `HK=0` to skip the hooks once.
+
+Releases use [cocogitto](https://docs.cocogitto.io), configured in `cog.toml`. `cog bump --auto` picks the next version from the commits since the last tag, sets it in `package.json`, prepends the release to `CHANGELOG.md`, then commits and tags it. Pushing the tag runs the release workflow, which uses that version's changelog entry as the GitHub release notes. Run `cog changelog` to preview unreleased changes.
 
 ```bash
 mise install
 bun install
-bun run check
-bun run typecheck
+hk install --mise                  # install the git hooks
+hk check --all                     # lint, format, and type check
 VOIX_PLAYER=none bun test          # synthesis and MCP tests run only if the model is cached
 bun run src/main.ts say "dev mode"
 bun run build && VOIX_BIN=./dist/voix-darwin-arm64 VOIX_PLAYER=none bun test tests/mcp.test.ts
