@@ -102,7 +102,7 @@ There is no config file. Defaults: voice `af_heart`, speed `1.0`.
 
 Use [mise](https://mise.jdx.dev) to install and activate the Bun, Node.js, hk, Pkl, and cocogitto versions pinned in `mise.toml`. Node runs the lint and format tooling. mise also puts `node_modules/.bin` on `PATH`. The release workflow uses the same mise configuration.
 
-Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The release workflow checks linting and formatting before building.
+Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The CI workflow checks commit messages, linting, formatting, types, and tests on every push to `main` and every pull request; the release workflow repeats those checks before building.
 
 Git hooks run through [hk](https://hk.jdx.dev), configured in `hk.pkl`. The pre-commit hook runs Oxlint, Oxfmt, and `tsc` on staged files and stages automatic fixes. The commit-msg hook requires [Conventional Commits](https://www.conventionalcommits.org) subjects such as `feat(mcp): add stop tool`. The pre-push hook runs the same checks and the tests. Run `hk check --all` to check everything at once, or `hk fix --all` to apply fixes. Set `HK=0` to skip the hooks once.
 

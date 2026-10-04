@@ -16,6 +16,7 @@ jobs:
           fetch-depth: 0 # cog needs tags and history for the release notes
       - uses: jdx/mise-action@v4
       - run: bun install --frozen-lockfile
+      - run: cog check
       - run: hk check --all
       - run: VOIX_PLAYER=none bun test
       - run: bun run build
