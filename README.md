@@ -12,13 +12,20 @@ An agent gathers whatever it needs with its other tools, writes a spoken summary
 
 ## Install
 
-Download the executable and put it on your `PATH`:
+One line (installs to `~/.local/bin/voix`; set `VOIX_INSTALL_DIR` to change that):
 
 ```bash
 curl -fsSL https://github.com/osmelmora/voix-mcp/releases/latest/download/install.sh | sh
 ```
 
-or build it yourself (needs [Bun](https://bun.sh) 1.4.2 (pinned in mise.toml)):
+Or download the executable from the [latest release](https://github.com/osmelmora/voix-mcp/releases/latest) ([direct link](https://github.com/osmelmora/voix-mcp/releases/latest/download/voix-darwin-arm64)) and put it on your `PATH`:
+
+```bash
+curl -fsSL -o voix https://github.com/osmelmora/voix-mcp/releases/latest/download/voix-darwin-arm64
+chmod +x voix && mv voix ~/.local/bin/voix
+```
+
+Or build it yourself (needs [Bun](https://bun.sh) 1.4.2 (pinned in mise.toml)):
 
 ```bash
 git clone https://github.com/osmelmora/voix-mcp && cd voix-mcp
