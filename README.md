@@ -18,7 +18,7 @@ Download the executable and put it on your `PATH`:
 curl -fsSL https://github.com/OWNER/voix-mcp/releases/latest/download/install.sh | sh
 ```
 
-or build it yourself (needs [Bun](https://bun.sh) 1.3.9):
+or build it yourself (needs [Bun](https://bun.sh) 1.4.2 (pinned in mise.toml)):
 
 ```bash
 git clone https://github.com/OWNER/voix-mcp && cd voix-mcp

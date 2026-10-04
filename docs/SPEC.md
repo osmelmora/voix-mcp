@@ -176,7 +176,7 @@ It is selected by swapping the layer passed to the Speaker; the Speaker, CLI and
 
 | decision | choice | why |
 | --- | --- | --- |
-| Language/runtime | TypeScript on Bun 1.3.9, `bun build --compile` | Single-file executables, cross-compilation, embeds assets. Measured working. |
+| Language/runtime | TypeScript on Bun 1.4.2 (developed and measured on 1.3.9; 1.4.2 verified identically), `bun build --compile` | Single-file executables, cross-compilation, embeds assets. Measured working. |
 | Framework | Effect 4.0.0 (pinned exactly) | Typed errors, fibers for stop/cancel, scoped child processes, built-in MCP server and CLI. +32 KB, +2.5 ms over hello world. |
 | Inference | `onnxruntime-node` 1.30.0 native CPU + `phonemizer` 1.2.1 (eSpeak NG in WASM) + ~150 lines of own Kokoro glue | 2× faster than q8, ~5× real time at fp32. No transformers.js, no sharp. Byte-identical phonemes to kokoro-js. WASM-only path measured slower than real time in Bun. |
 | ONNX runtime dylib | embedded as an asset, copied to the per-user temp dir on first use, then `onnxruntime-node` is imported dynamically | Bun extracts the `.node` addon to `$TMPDIR` and its rpath is `@loader_path`; the companion dylib must be there. Bun's own fix is unreleased. |
@@ -267,6 +267,7 @@ voix-mcp/
 - `effect/ai`, `effect/cli`, `effect/process` are marked unstable; pinned to 4.0.0.
 - Effect issue #8710 (stdio drops in-flight responses on stdin close) affects one-shot pipelines only.
 - Bun minifier incident with Effect (effect-smol #2126): build without `--minify` unless the compiled smoke test passes with it.
+- A standalone Bun in `~/.bun/bin` ahead of mise on PATH shadows the pinned version; `scripts/build.ts` spawns `process.execPath` so the embedded runtime still matches whatever Bun ran the build.
 
 ## 11. Measurements behind the decisions (this machine, M-series, Bun 1.3.9)
 

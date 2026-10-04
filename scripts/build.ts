@@ -21,7 +21,9 @@ const args = [
 if (minify) {
   args.push("--minify");
 }
-const proc = Bun.spawn(["bun", ...args], {
+// Spawn the Bun that is running this script, so the embedded runtime matches the pinned version
+// even when another `bun` is earlier on PATH.
+const proc = Bun.spawn([process.execPath, ...args], {
   stdio: ["inherit", "inherit", "inherit"],
 });
 const code = await proc.exited;
