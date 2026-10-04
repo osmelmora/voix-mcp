@@ -1,9 +1,9 @@
 #!/bin/sh
 # Install voix: downloads the darwin-arm64 executable from the latest GitHub release into ~/.local/bin.
-# Usage: curl -fsSL https://github.com/OWNER/voix-mcp/releases/latest/download/install.sh | sh
+# Usage: curl -fsSL https://github.com/osmelmora/voix-mcp/releases/latest/download/install.sh | sh
 set -eu
 
-REPO="${VOIX_REPO:-OWNER/voix-mcp}"
+REPO="${VOIX_REPO:-osmelmora/voix-mcp}"
 VERSION="${VOIX_VERSION:-latest}"
 INSTALL_DIR="${VOIX_INSTALL_DIR:-$HOME/.local/bin}"
 

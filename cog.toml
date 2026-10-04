@@ -5,7 +5,9 @@ ignore_merge_commits = true
 from_latest_tag = true
 
 # The app reads its version from package.json; keep it in step with the tag.
-pre_bump_hooks = ["bun pm version {{version}} --no-git-tag-version"]
+pre_bump_hooks = [
+  "bun pm version {{version}} --no-git-tag-version --allow-same-version",
+]
 post_bump_hooks = []
 
 [changelog]

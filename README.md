@@ -15,13 +15,13 @@ An agent gathers whatever it needs with its other tools, writes a spoken summary
 Download the executable and put it on your `PATH`:
 
 ```bash
-curl -fsSL https://github.com/OWNER/voix-mcp/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/osmelmora/voix-mcp/releases/latest/download/install.sh | sh
 ```
 
 or build it yourself (needs [Bun](https://bun.sh) 1.4.2 (pinned in mise.toml)):
 
 ```bash
-git clone https://github.com/OWNER/voix-mcp && cd voix-mcp
+git clone https://github.com/osmelmora/voix-mcp && cd voix-mcp
 bun install
 bun run build            # → dist/voix-darwin-arm64 (≈120 MB)
 cp dist/voix-darwin-arm64 ~/.local/bin/voix

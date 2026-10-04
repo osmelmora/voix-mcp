@@ -195,7 +195,7 @@ It is selected by swapping the layer passed to the Speaker; the Speaker, CLI and
 User downloads one file: `voix-darwin-arm64` (≈118 MB: Bun runtime 60 MB, ONNX runtime 44 MB, voices 14 MB, code <1 MB). On first speech it downloads `model.onnx` (326 MB) into `~/.cache/voix`.
 
 ```bash
-curl -fsSL https://github.com/<owner>/voix-mcp/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/osmelmora/voix-mcp/releases/latest/download/install.sh | sh
 voix say "Hello"
 ```
 
