@@ -1,0 +1,4 @@
+node_modules/
+dist/
+*.wav
+.DS_Store

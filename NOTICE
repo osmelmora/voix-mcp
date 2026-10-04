@@ -1,0 +1,13 @@
+voix bundles or downloads third-party components:
+
+- Kokoro-82M v1.0 ONNX model and voice embeddings
+  https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX (Apache-2.0),
+  derived from https://huggingface.co/hexgrad/Kokoro-82M (Apache-2.0).
+  The 28 English voice files are embedded in the executable; the model is downloaded on first use.
+- Text normalization and phoneme post-processing ported from kokoro-js (Apache-2.0).
+- ONNX Runtime (onnxruntime-node), MIT. The darwin-arm64 shared library is embedded in the executable.
+- phonemizer (Apache-2.0 wrapper) which embeds a WebAssembly build of eSpeak NG.
+  eSpeak NG is GPL-3.0-or-later: https://github.com/espeak-ng/espeak-ng
+  Because that build ships inside the voix executable, redistributors should review the GPL-3.0
+  obligations for the combined binary. This is a known open item for the project license.
+- Effect (MIT), Bun runtime (MIT).

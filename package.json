@@ -1,0 +1,25 @@
+{
+  "name": "voix",
+  "version": "0.1.0",
+  "description": "Local, model-agnostic voice output primitive for AI agents (MCP + CLI)",
+  "type": "module",
+  "private": true,
+  "bin": { "voix": "src/main.ts" },
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "build": "bun run scripts/build.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.0",
+    "effect": "4.0.0",
+    "onnxruntime-node": "1.30.0",
+    "phonemizer": "1.2.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.9",
+    "typescript": "^5.9.0"
+  },
+  "trustedDependencies": []
+}

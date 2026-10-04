@@ -1,0 +1,28 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-darwin-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: VOIX_PLAYER=none bun test
+      - run: bun run build
+      - run: ./dist/voix-darwin-arm64 status
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/voix-darwin-arm64
+            scripts/install.sh
+          generate_release_notes: true
