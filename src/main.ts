@@ -25,7 +25,7 @@ import { VERSION } from "./version.ts";
 const mb = (n: number) => (n / (1024 * 1024)).toFixed(0);
 
 /** Run `prepare`, rendering download progress on stderr when a download is needed. */
-const prepareWithProgress = Effect.gen(function* () {
+const prepareWithProgress = Effect.gen(function* prepareWithProgress() {
   const provider = yield* Provider;
   const before = yield* provider.status;
   if (before.installed) {
@@ -35,7 +35,7 @@ const prepareWithProgress = Effect.gen(function* () {
     `Kokoro model not installed. Downloading ${mb(KOKORO_MODEL.size)} MB to ${before.modelPath} (one time)...`
   );
   const ticker = Effect.forever(
-    Effect.gen(function* () {
+    Effect.gen(function* ticker() {
       const s = yield* provider.status;
       if (Option.isSome(s.downloading)) {
         const { received, total } = s.downloading.value;
@@ -50,7 +50,17 @@ const prepareWithProgress = Effect.gen(function* () {
   yield* Console.error("✓ Model installed");
 });
 
-const readStdin = Effect.gen(function* () {
+const concatBytes = (chunks: readonly Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+};
+
+const readStdin = Effect.gen(function* readStdin() {
   const stdio = yield* Stdio.Stdio;
   if (yield* stdio.stdinIsTerminal) {
     return "";
@@ -60,16 +70,6 @@ const readStdin = Effect.gen(function* () {
   // Effect.catch handles typed Effects, not Promise rejections.
   // oxlint-disable-next-line promise/prefer-await-to-then
 }).pipe(Effect.catch(() => Effect.succeed("")));
-
-function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
-  let offset = 0;
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.byteLength;
-  }
-  return out;
-}
 
 const voiceFlag = Flag.String("voice").pipe(
   Flag.withDescription("Voice id (see `voix voices`)"),
@@ -92,9 +92,9 @@ const textArg = Argument.String("text").pipe(
 
 const say = Command.make(
   "say",
-  { text: textArg, voice: voiceFlag, speed: speedFlag, out: outFlag },
+  { out: outFlag, speed: speedFlag, text: textArg, voice: voiceFlag },
   ({ out, speed, text, voice }) =>
-    Effect.gen(function* () {
+    Effect.gen(function* sayHandler() {
       const input = (
         text.length > 0 ? text.join(" ") : yield* readStdin
       ).trim();
@@ -110,7 +110,7 @@ const say = Command.make(
         const provider = yield* Provider;
         const sentences = splitSentences(toSpeakable(input));
         const chunks = yield* Stream.fromIterable(sentences).pipe(
-          Stream.flatMap((s) => provider.synthesize({ text: s, voice, speed })),
+          Stream.flatMap((s) => provider.synthesize({ speed, text: s, voice })),
           Stream.runCollect
         );
         const pcm = concatPcm(chunks.map((c) => c.pcm));
@@ -122,13 +122,13 @@ const say = Command.make(
         return;
       }
       const speaker = yield* Speaker;
-      yield* speaker.speak({ text: input, voice, speed });
+      yield* speaker.speak({ speed, text: input, voice });
       yield* speaker.awaitIdle;
     })
 ).pipe(Command.withDescription("Speak text through the local speakers"));
 
 const setup = Command.make("setup", {}, () =>
-  Effect.gen(function* () {
+  Effect.gen(function* setupHandler() {
     yield* prepareWithProgress;
     const provider = yield* Provider;
     const status = yield* provider.status;
@@ -137,7 +137,7 @@ const setup = Command.make("setup", {}, () =>
 ).pipe(Command.withDescription("Download and verify the speech model"));
 
 const voices = Command.make("voices", {}, () =>
-  Effect.gen(function* () {
+  Effect.gen(function* voicesHandler() {
     const provider = yield* Provider;
     for (const v of provider.voices) {
       const mark = v.id === provider.defaultVoice ? "*" : " ";
@@ -149,7 +149,7 @@ const voices = Command.make("voices", {}, () =>
 ).pipe(Command.withDescription("List available voices (* = default)"));
 
 const status = Command.make("status", {}, () =>
-  Effect.gen(function* () {
+  Effect.gen(function* statusHandler() {
     const provider = yield* Provider;
     const player = yield* Player;
     const s = yield* provider.status;
@@ -183,7 +183,7 @@ const AppLive = SpeakerLive.pipe(
 
 Command.run(voix, { version: VERSION }).pipe(
   Effect.catchIf(isVoixError, (e) =>
-    Effect.gen(function* () {
+    Effect.gen(function* reportError() {
       yield* Console.error(`error: ${e.message}`);
       process.exitCode = 1;
     })

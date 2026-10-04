@@ -20,10 +20,10 @@ class StdioClient {
 
   start(command: string[]) {
     const proc = Bun.spawn(command, {
+      env: { ...process.env, VOIX_PLAYER: "none" },
+      stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, VOIX_PLAYER: "none" },
     });
     this.proc = proc;
     void this.pump(proc.stdout as unknown as AsyncIterable<Uint8Array>);
@@ -80,7 +80,7 @@ class StdioClient {
         clearTimeout(timer);
         resolve(msg);
       });
-      this.send({ jsonrpc: "2.0", id, method, params: params ?? {} });
+      this.send({ id, jsonrpc: "2.0", method, params: params ?? {} });
     });
   }
 
@@ -108,9 +108,9 @@ describeMcp("voix mcp (stdio)", () => {
   beforeAll(async () => {
     client.start(command);
     const init = await client.request("initialize", {
-      protocolVersion: "2025-06-18",
       capabilities: {},
       clientInfo: { name: "voix-test", version: "0" },
+      protocolVersion: "2025-06-18",
     });
     expect(init.result.serverInfo.name).toBe("voix");
     expect(init.result.instructions).toContain("speak");
@@ -139,25 +139,25 @@ describeMcp("voix mcp (stdio)", () => {
 
   test("speak returns speaking, then stop returns stopped", async () => {
     const res = await client.request("tools/call", {
-      name: "speak",
       arguments: {
         text: "Hello from the test suite. This is the second sentence.",
       },
+      name: "speak",
     });
     expect(res.result.isError).toBeFalsy();
     expect(res.result.structuredContent.status).toBe("speaking");
     expect(res.result.structuredContent.sentences).toBe(2);
     const stop = await client.request("tools/call", {
-      name: "stop",
       arguments: {},
+      name: "stop",
     });
     expect(typeof stop.result.structuredContent.stopped).toBe("boolean");
   }, 90_000);
 
   test("typed errors come back as tool errors", async () => {
     const res = await client.request("tools/call", {
+      arguments: { speed: 9, text: "hi" },
       name: "speak",
-      arguments: { text: "hi", speed: 9 },
     });
     expect(res.result.isError).toBe(true);
     expect(res.result.content[0].text).toContain("InvalidSpeed");
@@ -165,8 +165,8 @@ describeMcp("voix mcp (stdio)", () => {
 
   test("schema violations are protocol errors", async () => {
     const res = await client.request("tools/call", {
-      name: "speak",
       arguments: { text: 42 },
+      name: "speak",
     });
     expect(res.error?.code).toBe(-32_602);
   });

@@ -9,7 +9,7 @@ import { Effect } from "effect";
 import type * as OnnxRuntime from "onnxruntime-node";
 
 import dylibAsset from "../../../node_modules/onnxruntime-node/bin/napi-v6/darwin/arm64/libonnxruntime.1.dylib" with { type: "file" };
-import { SynthFailed } from "../../core/errors.ts";
+import { SynthFailed } from "../../core/errors/synth-failed.ts";
 
 export type Ort = typeof OnnxRuntime;
 
@@ -20,7 +20,7 @@ export const isEmbedded = (): boolean => dylibAsset.startsWith("/$bunfs/");
 export const dylibDestination = (): string =>
   path.join(os.tmpdir(), DYLIB_NAME);
 
-async function materializeDylib(): Promise<void> {
+const materializeDylib = async (): Promise<void> => {
   if (!isEmbedded()) {
     return;
   }
@@ -30,19 +30,19 @@ async function materializeDylib(): Promise<void> {
     return;
   }
   await Bun.write(dest, src);
-}
+};
 
 let ortPromise: Promise<Ort> | undefined;
 
-async function importOrt(): Promise<Ort> {
+const importOrt = async (): Promise<Ort> => {
   await materializeDylib();
   return import("onnxruntime-node");
-}
+};
 
 export const loadOrt: Effect.Effect<Ort, SynthFailed> = Effect.tryPromise({
-  try: () => (ortPromise ??= importOrt()),
   catch: (e) =>
     new SynthFailed({
       reason: `could not load ONNX runtime: ${e instanceof Error ? e.message : String(e)}`,
     }),
+  try: () => (ortPromise ??= importOrt()),
 });

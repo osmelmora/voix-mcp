@@ -1,12 +1,10 @@
 import { Context } from "effect";
 import type { Effect, Option, Stream } from "effect";
 
-import type {
-  ChecksumMismatch,
-  DownloadFailed,
-  InvalidVoice,
-  SynthFailed,
-} from "../core/errors.ts";
+import type { ChecksumMismatch } from "../core/errors/checksum-mismatch.ts";
+import type { DownloadFailed } from "../core/errors/download-failed.ts";
+import type { InvalidVoice } from "../core/errors/invalid-voice.ts";
+import type { SynthFailed } from "../core/errors/synth-failed.ts";
 
 export interface Voice {
   readonly id: string;

@@ -1,7 +1,8 @@
 import { Context, Effect, FileSystem, Layer } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { PlaybackFailed, PlayerNotFound } from "../core/errors.ts";
+import { PlaybackFailed } from "../core/errors/playback-failed.ts";
+import { PlayerNotFound } from "../core/errors/player-not-found.ts";
 import { encodeWav } from "./wav.ts";
 
 export interface PlayerShape {
@@ -26,11 +27,11 @@ export const AfplayPlayer: Layer.Layer<
   FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
 > = Layer.effect(
   Player,
-  Effect.gen(function* () {
+  Effect.gen(function* AfplayPlayer() {
     const fs = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const play = (pcm: Float32Array, sampleRate: number) =>
-      Effect.gen(function* () {
+      Effect.gen(function* playPcm() {
         if (!(yield* fs.exists(AFPLAY))) {
           return yield* new PlayerNotFound({ platform: process.platform });
         }
@@ -40,9 +41,9 @@ export const AfplayPlayer: Layer.Layer<
         });
         yield* fs.writeFile(file, encodeWav(pcm, sampleRate));
         const handle = yield* ChildProcess.make(AFPLAY, [file], {
+          stderr: "pipe",
           stdin: "ignore",
           stdout: "ignore",
-          stderr: "pipe",
         });
         const code = yield* handle.exitCode;
         if (code !== 0) {
@@ -68,14 +69,7 @@ export const NullPlayer: Layer.Layer<Player> = Layer.succeed(Player, {
   play: () => Effect.void,
 });
 
-/** Pick the player for this process: VOIX_PLAYER=none disables output; otherwise the platform default. */
-export const PlayerFromEnv: Layer.Layer<
-  Player,
-  never,
-  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
-> = selectPlayer();
-
-function selectPlayer() {
+const selectPlayer = () => {
   if (process.env.VOIX_PLAYER === "none") {
     return NullPlayer;
   }
@@ -86,4 +80,11 @@ function selectPlayer() {
     name: "unsupported",
     play: () => new PlayerNotFound({ platform: process.platform }),
   });
-}
+};
+
+/** Pick the player for this process: VOIX_PLAYER=none disables output; otherwise the platform default. */
+export const PlayerFromEnv: Layer.Layer<
+  Player,
+  never,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+> = selectPlayer();

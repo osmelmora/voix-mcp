@@ -17,15 +17,13 @@ import { Player } from "../audio/player.ts";
 import { concatPcm } from "../audio/wav.ts";
 import { Provider } from "../providers/provider.ts";
 import type { AudioChunk } from "../providers/provider.ts";
-import {
-  EmptyText,
-  InvalidSpeed,
-  InvalidVoice,
-  ModelDownloading,
-  SynthFailed,
-  TextTooLong,
-} from "./errors.ts";
 import type { VoixError } from "./errors.ts";
+import { EmptyText } from "./errors/empty-text.ts";
+import { InvalidSpeed } from "./errors/invalid-speed.ts";
+import { InvalidVoice } from "./errors/invalid-voice.ts";
+import { ModelDownloading } from "./errors/model-downloading.ts";
+import { SynthFailed } from "./errors/synth-failed.ts";
+import { TextTooLong } from "./errors/text-too-long.ts";
 import { MAX_TEXT_LENGTH, splitSentences, toSpeakable } from "./text.ts";
 
 export const SPEED_MIN = 0.5;
@@ -85,7 +83,7 @@ type Message =
 export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
   Layer.effect(
     Speaker,
-    Effect.gen(function* () {
+    Effect.gen(function* SpeakerLive() {
       const provider = yield* Provider;
       const player = yield* Player;
       const jobs = yield* Queue.unbounded<Job>();
@@ -98,14 +96,14 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
       // Synthesize sentence by sentence into a queue while playing what is ready: the first sentence
       // starts as soon as it exists, every later playback chunk is whatever finished meanwhile.
       const runJob = (job: Job): Effect.Effect<void, VoixError> =>
-        Effect.gen(function* () {
+        Effect.gen(function* runJobBody() {
           if (yield* Ref.get(job.cancelled)) {
             return;
           }
           const messages = yield* Queue.unbounded<Message>();
           const producer = Stream.fromIterable(job.sentences).pipe(
             Stream.flatMap((text) =>
-              provider.synthesize({ text, voice: job.voice, speed: job.speed })
+              provider.synthesize({ speed: job.speed, text, voice: job.voice })
             ),
             Stream.runForEach((chunk) =>
               Queue.offer(messages, { _tag: "chunk", chunk })
@@ -165,12 +163,12 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
         );
 
       const worker = Effect.forever(
-        Effect.gen(function* () {
+        Effect.gen(function* worker() {
           const job = yield* Queue.take(jobs);
           const fiber = yield* Effect.forkChild(
             runJob(job).pipe(Effect.ignore)
           );
-          yield* Ref.set(current, Option.some({ job, fiber }));
+          yield* Ref.set(current, Option.some({ fiber, job }));
           yield* Fiber.await(fiber);
           yield* Ref.set(current, Option.none());
           yield* Ref.update(active, (n) => n - 1);
@@ -179,7 +177,7 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
       yield* Effect.forkScoped(worker);
 
       const cancelJob = (job: Job) =>
-        Effect.gen(function* () {
+        Effect.gen(function* cancelJobBody() {
           yield* Ref.set(job.cancelled, true);
           const running = yield* Ref.get(current);
           if (Option.isSome(running) && running.value.job.id === job.id) {
@@ -190,13 +188,13 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
       const speak = (
         request: SpeakRequest
       ): Effect.Effect<SpeakResult, VoixError> =>
-        Effect.gen(function* () {
+        Effect.gen(function* speakBody() {
           const voice = request.voice ?? provider.defaultVoice;
           const speed = request.speed ?? DEFAULT_SPEED;
           if (!provider.voices.some((v) => v.id === voice)) {
             return yield* new InvalidVoice({
-              voice,
               available: provider.voices.map((v) => v.id),
+              voice,
             });
           }
           if (
@@ -205,9 +203,9 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
             speed > SPEED_MAX
           ) {
             return yield* new InvalidSpeed({
-              speed,
-              min: SPEED_MIN,
               max: SPEED_MAX,
+              min: SPEED_MIN,
+              speed,
             });
           }
           if (request.text.length > MAX_TEXT_LENGTH) {
@@ -224,19 +222,19 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
           const id = nextId;
           nextId += 1;
           const job: Job = {
+            cancelled: yield* Ref.make(false),
             id,
             sentences,
-            voice,
             speed,
             started: yield* Deferred.make<SpeakStatus, VoixError>(),
-            cancelled: yield* Ref.make(false),
+            voice,
           };
           const queuedBehind = yield* Ref.getAndUpdate(active, (n) => n + 1);
           yield* Queue.offer(jobs, job);
           const base = {
-            voice,
-            sentences: sentences.length,
             queued_behind: queuedBehind,
+            sentences: sentences.length,
+            voice,
           };
           if (queuedBehind > 0) {
             return { status: "queued" as const, ...base };
@@ -246,7 +244,7 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
             Effect.timeoutOrElse({
               duration: FIRST_AUDIO_TIMEOUT,
               orElse: () =>
-                Effect.gen(function* () {
+                Effect.gen(function* orElse() {
                   yield* cancelJob(job);
                   const s = yield* provider.status;
                   return yield* Option.isSome(s.downloading)
@@ -261,7 +259,7 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
           return { status, ...base };
         });
 
-      const stop: Effect.Effect<StopResult> = Effect.gen(function* () {
+      const stop: Effect.Effect<StopResult> = Effect.gen(function* stop() {
         const dropped = yield* Queue.clear(jobs);
         for (const job of dropped) {
           yield* Ref.set(job.cancelled, true);
@@ -275,12 +273,12 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
         return { stopped: dropped.length > 0 || Option.isSome(running) };
       });
 
-      const awaitIdle: Effect.Effect<void> = Effect.gen(function* () {
+      const awaitIdle: Effect.Effect<void> = Effect.gen(function* awaitIdle() {
         while ((yield* Ref.get(active)) > 0) {
           yield* Effect.sleep("25 millis");
         }
       });
 
-      return { speak, stop, awaitIdle };
+      return { awaitIdle, speak, stop };
     })
   );

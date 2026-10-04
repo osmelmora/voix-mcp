@@ -3,7 +3,7 @@
 import { Effect } from "effect";
 import { phonemize as espeak } from "phonemizer";
 
-import { SynthFailed } from "../../core/errors.ts";
+import { SynthFailed } from "../../core/errors/synth-failed.ts";
 import tokenizer from "./assets/tokenizer.json";
 import { normalizeText } from "./normalize.ts";
 
@@ -15,13 +15,13 @@ const VOCAB: Record<string, number> = tokenizer.model.vocab;
 
 const PUNCT = ';:,.!?¡¿—…"«»“”(){}[]';
 const PUNCT_RE = new RegExp(
-  `(\\s*[${PUNCT.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}]+\\s*)+`,
-  "g"
+  `(\\s*[${PUNCT.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&")}]+\\s*)+`,
+  "gu"
 );
 
 export type Lang = "en-US" | "en-GB";
 
-async function phonemizeRaw(text: string, lang: Lang): Promise<string> {
+const phonemizeRaw = async (text: string, lang: Lang): Promise<string> => {
   const espeakLang = lang === "en-US" ? "en-us" : "en";
   const normalized = normalizeText(text);
   const parts: string[] = [];
@@ -53,26 +53,26 @@ async function phonemizeRaw(text: string, lang: Lang): Promise<string> {
     .replaceAll("r", "ɹ")
     .replaceAll("x", "k")
     .replaceAll("ɬ", "l")
-    .replaceAll(/(?<=[a-zɹː])(?=hˈʌndɹɪd)/g, " ")
-    .replaceAll(/ z(?=[;:,.!?¡¿—…"«»“” ]|$)/g, "z");
+    .replaceAll(/(?<=[a-zɹː])(?=hˈʌndɹɪd)/gu, " ")
+    .replaceAll(/ z(?=[;:,.!?¡¿—…"«»“” ]|$)/gu, "z");
   if (lang === "en-US") {
-    ps = ps.replaceAll(/(?<=nˈaɪn)ti(?!ː)/g, "di");
+    ps = ps.replaceAll(/(?<=nˈaɪn)ti(?!ː)/gu, "di");
   }
   return ps.trim();
-}
+};
 
 export const phonemize = (
   text: string,
   lang: Lang
 ): Effect.Effect<string, SynthFailed> =>
   Effect.tryPromise({
-    try: () => phonemizeRaw(text, lang),
     catch: (e) =>
       new SynthFailed({ reason: `phonemization failed: ${String(e)}` }),
+    try: () => phonemizeRaw(text, lang),
   });
 
 /** Map phonemes to token ids, wrapped in the "$" (0) padding tokens. Unknown characters are dropped. */
-export function tokenize(phonemes: string): number[] {
+export const tokenize = (phonemes: string): number[] => {
   const ids: number[] = [];
   for (const ch of phonemes) {
     const id = VOCAB[ch];
@@ -81,13 +81,13 @@ export function tokenize(phonemes: string): number[] {
     }
   }
   return [0, ...ids.slice(0, MAX_PHONEME_TOKENS), 0];
-}
+};
 
 /** Split a phoneme string into pieces that fit the model's token limit, breaking on spaces. */
-export function splitPhonemes(
+export const splitPhonemes = (
   phonemes: string,
   max = MAX_PHONEME_TOKENS
-): string[] {
+): string[] => {
   if ([...phonemes].length <= max) {
     return [phonemes];
   }
@@ -106,4 +106,4 @@ export function splitPhonemes(
     pieces.push(current);
   }
   return pieces;
-}
+};

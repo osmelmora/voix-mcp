@@ -31,10 +31,10 @@ import bm_george from "./assets/voices/bm_george.bin" with { type: "file" };
 import bm_lewis from "./assets/voices/bm_lewis.bin" with { type: "file" };
 
 export const VOICE_FILES: Record<string, string> = {
-  af_heart,
   af_alloy,
   af_aoede,
   af_bella,
+  af_heart,
   af_jessica,
   af_kore,
   af_nicole,
@@ -99,10 +99,10 @@ export const DEFAULT_VOICE: KokoroVoiceId = "af_heart";
 const describe = (id: string): Voice => {
   const [prefix, raw] = id.split("_") as [string, string];
   return {
-    id,
-    name: raw.charAt(0).toUpperCase() + raw.slice(1),
-    language: prefix.charAt(0) === "a" ? "en-US" : "en-GB",
     gender: prefix.charAt(1) === "f" ? "female" : "male",
+    id,
+    language: prefix.charAt(0) === "a" ? "en-US" : "en-GB",
+    name: raw.charAt(0).toUpperCase() + raw.slice(1),
   };
 };
 

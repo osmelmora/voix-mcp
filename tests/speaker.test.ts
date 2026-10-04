@@ -12,14 +12,13 @@ const RATE = 100;
 /** Fake provider: each sentence takes `synthMs` and yields one chunk whose length encodes the sentence index. */
 const FakeProvider = (synthMs: number) =>
   Layer.succeed(Provider, {
-    id: "fake",
-    voices: [{ id: "v1", name: "One", language: "en-US", gender: "female" }],
     defaultVoice: "v1",
+    id: "fake",
     prepare: Effect.void,
     status: Effect.succeed({
+      downloading: Option.none(),
       installed: true,
       loaded: true,
-      downloading: Option.none(),
       modelPath: "/dev/null",
     }),
     synthesize: ({ text }) =>
@@ -32,6 +31,7 @@ const FakeProvider = (synthMs: number) =>
           })
         )
       ),
+    voices: [{ gender: "female", id: "v1", language: "en-US", name: "One" }],
   });
 
 interface Played {
@@ -46,12 +46,12 @@ const makeRecorder = (playMs: number) => {
   const layer = Layer.succeed(Player, {
     name: "recorder",
     play: (pcm) =>
-      Effect.gen(function* () {
-        played.push({ samples: pcm.length, at: Date.now() - start });
+      Effect.gen(function* recordPlay() {
+        played.push({ at: Date.now() - start, samples: pcm.length });
         yield* Effect.sleep(`${playMs} millis`);
       }),
   });
-  return { played, layer };
+  return { layer, played };
 };
 
 const run = <A, E>(
@@ -64,7 +64,7 @@ const run = <A, E>(
     Layer.provide(Layer.mergeAll(FakeProvider(synthMs), rec.layer))
   );
   return Effect.runPromise(
-    Effect.gen(function* () {
+    Effect.gen(function* runScenario() {
       const speaker = yield* Speaker;
       return yield* body(speaker, rec.played);
     }).pipe(Effect.provide(layer), Effect.scoped)
@@ -74,7 +74,7 @@ const run = <A, E>(
 describe("Speaker", () => {
   test("returns once the first sentence plays and batches the rest", async () => {
     await run(20, 60, (speaker, played) =>
-      Effect.gen(function* () {
+      Effect.gen(function* batching() {
         const result = yield* speaker.speak({ text: "One. Two. Three. Four." });
         expect(result.status).toBe("speaking");
         expect(result.sentences).toBe(4);
@@ -94,7 +94,7 @@ describe("Speaker", () => {
 
   test("second speak is queued behind the first and plays after it", async () => {
     await run(5, 40, (speaker, played) =>
-      Effect.gen(function* () {
+      Effect.gen(function* queueing() {
         const a = yield* speaker.speak({ text: "AAAA." });
         const b = yield* speaker.speak({ text: "BB." });
         expect(a.status).toBe("speaking");
@@ -111,7 +111,7 @@ describe("Speaker", () => {
 
   test("stop interrupts playback and drops the queue", async () => {
     await run(5, 500, (speaker, played) =>
-      Effect.gen(function* () {
+      Effect.gen(function* stopping() {
         const started = Date.now();
         yield* speaker.speak({ text: "First. Second. Third." });
         const queued = yield* speaker.speak({ text: "Later." });
@@ -130,7 +130,7 @@ describe("Speaker", () => {
 
   test("validates input", async () => {
     await run(1, 1, (speaker) =>
-      Effect.gen(function* () {
+      Effect.gen(function* validation() {
         const empty = yield* Effect.flip(
           speaker.speak({ text: "## \n```x```" })
         );
@@ -144,7 +144,7 @@ describe("Speaker", () => {
         );
         expect(voice._tag).toBe("InvalidVoice");
         const speed = yield* Effect.flip(
-          speaker.speak({ text: "hi", speed: 3 })
+          speaker.speak({ speed: 3, text: "hi" })
         );
         expect(speed._tag).toBe("InvalidSpeed");
       })

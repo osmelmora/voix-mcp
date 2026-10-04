@@ -57,13 +57,13 @@ describe("kokoro synthesis", () => {
     "produces 24 kHz audio of plausible length",
     async () => {
       const chunks = await Effect.runPromise(
-        Effect.gen(function* () {
+        Effect.gen(function* chunks() {
           const provider = yield* Provider;
           return yield* Stream.runCollect(
             provider.synthesize({
+              speed: 1,
               text: "Hello from voix.",
               voice: "af_heart",
-              speed: 1,
             })
           );
         }).pipe(Effect.provide(KokoroProvider), Effect.scoped)
@@ -84,11 +84,11 @@ describe("kokoro synthesis", () => {
     "rejects unknown voices before loading anything",
     async () => {
       const error = await Effect.runPromise(
-        Effect.gen(function* () {
+        Effect.gen(function* error() {
           const provider = yield* Provider;
           return yield* Effect.flip(
             Stream.runCollect(
-              provider.synthesize({ text: "x", voice: "zz_nobody", speed: 1 })
+              provider.synthesize({ speed: 1, text: "x", voice: "zz_nobody" })
             )
           );
         }).pipe(Effect.provide(KokoroProvider), Effect.scoped)

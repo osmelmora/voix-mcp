@@ -3,16 +3,17 @@ import path from "node:path";
 
 import { Effect, Stream } from "effect";
 
-import { ChecksumMismatch, DownloadFailed } from "../../core/errors.ts";
+import { ChecksumMismatch } from "../../core/errors/checksum-mismatch.ts";
+import { DownloadFailed } from "../../core/errors/download-failed.ts";
 import { modelsDir } from "../../core/paths.ts";
 
 export const KOKORO_MODEL = {
-  version: "v1.0",
-  precision: "fp32",
-  url: "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx",
-  size: 325_532_232,
-  sha256: "8fbea51ea711f2af382e88c833d9e288c6dc82ce5e98421ea61c058ce21a34cb",
   license: "Apache-2.0",
+  precision: "fp32",
+  sha256: "8fbea51ea711f2af382e88c833d9e288c6dc82ce5e98421ea61c058ce21a34cb",
+  size: 325_532_232,
+  url: "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx",
+  version: "v1.0",
 } as const;
 
 export const modelDir = (): string =>
@@ -31,24 +32,24 @@ const FLUSH_STEP = 16 * 1024 * 1024;
 export const downloadModel = (
   onProgress: (received: number, total: number) => Effect.Effect<void>
 ): Effect.Effect<void, DownloadFailed | ChecksumMismatch> =>
-  Effect.gen(function* () {
+  Effect.gen(function* download() {
     const target = modelPath();
     const part = `${target}.part`;
     const fail = (reason: string) =>
-      new DownloadFailed({ url: KOKORO_MODEL.url, reason });
+      new DownloadFailed({ reason, url: KOKORO_MODEL.url });
 
     yield* Effect.try({
-      try: () => fs.mkdirSync(modelDir(), { recursive: true }),
       catch: (e) => fail(String(e)),
+      try: () => fs.mkdirSync(modelDir(), { recursive: true }),
     });
     yield* Effect.try({
-      try: () => fs.rmSync(part, { force: true }),
       catch: (e) => fail(String(e)),
+      try: () => fs.rmSync(part, { force: true }),
     });
 
     const response = yield* Effect.tryPromise({
-      try: (signal) => fetch(KOKORO_MODEL.url, { signal, redirect: "follow" }),
       catch: (e) => fail(e instanceof Error ? e.message : String(e)),
+      try: (signal) => fetch(KOKORO_MODEL.url, { redirect: "follow", signal }),
     });
     const { body } = response;
     if (!response.ok || body === null) {
@@ -68,7 +69,7 @@ export const downloadModel = (
       onError: (e) => fail(e instanceof Error ? e.message : String(e)),
     }).pipe(
       Stream.runForEach((chunk) =>
-        Effect.gen(function* () {
+        Effect.gen(function* writeChunk() {
           hasher.update(chunk);
           writer.write(chunk);
           received += chunk.byteLength;
@@ -91,13 +92,13 @@ export const downloadModel = (
     if (actual !== KOKORO_MODEL.sha256) {
       fs.rmSync(part, { force: true });
       return yield* new ChecksumMismatch({
-        path: target,
-        expected: KOKORO_MODEL.sha256,
         actual,
+        expected: KOKORO_MODEL.sha256,
+        path: target,
       });
     }
     yield* Effect.try({
-      try: () => fs.renameSync(part, target),
       catch: (e) => fail(String(e)),
+      try: () => fs.renameSync(part, target),
     });
   });

@@ -1,5 +1,8 @@
 /** Encode mono float PCM as a 16-bit PCM WAV file. */
-export function encodeWav(pcm: Float32Array, sampleRate: number): Uint8Array {
+export const encodeWav = (
+  pcm: Float32Array,
+  sampleRate: number
+): Uint8Array => {
   const dataBytes = pcm.length * 2;
   const buffer = new ArrayBuffer(44 + dataBytes);
   const view = new DataView(buffer);
@@ -30,9 +33,9 @@ export function encodeWav(pcm: Float32Array, sampleRate: number): Uint8Array {
     view.setInt16(44 + i * 2, s < 0 ? s * 0x80_00 : s * 0x7f_ff, true);
   }
   return new Uint8Array(buffer);
-}
+};
 
-export function concatPcm(chunks: readonly Float32Array[]): Float32Array {
+export const concatPcm = (chunks: readonly Float32Array[]): Float32Array => {
   if (chunks.length === 1) {
     // The length check guarantees the single chunk exists.
     // oxlint-disable-next-line typescript/no-non-null-assertion
@@ -49,7 +52,7 @@ export function concatPcm(chunks: readonly Float32Array[]): Float32Array {
     offset += c.length;
   }
   return out;
-}
+};
 
 export const durationSeconds = (
   pcm: Float32Array,
