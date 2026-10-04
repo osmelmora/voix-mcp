@@ -11,7 +11,7 @@ jobs:
   build-darwin-arm64:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # cog needs tags and history for the release notes
       - uses: jdx/mise-action@v4
@@ -22,7 +22,7 @@ jobs:
       - run: bun run build
       - run: ./dist/voix-darwin-arm64 status
       - run: cog changelog --at "$GITHUB_REF_NAME" > RELEASE_NOTES.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/voix-darwin-arm64
