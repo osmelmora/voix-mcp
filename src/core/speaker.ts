@@ -2,6 +2,7 @@ import {
   Cause,
   Console,
   Context,
+  Data,
   Deferred,
   Effect,
   Exit,
@@ -27,8 +28,11 @@ import { TextTooLong } from "./errors/text-too-long.ts";
 import { MAX_TEXT_LENGTH, splitSentences, toSpeakable } from "./text.ts";
 
 export const SPEED_MIN = 0.5;
+
 export const SPEED_MAX = 2;
+
 export const DEFAULT_SPEED = 1;
+
 /** How long `speak` waits for the first audio before giving up with ModelDownloading. */
 export const FIRST_AUDIO_TIMEOUT = "45 seconds";
 
@@ -51,7 +55,7 @@ export interface StopResult {
   readonly stopped: boolean;
 }
 
-export interface SpeakerShape {
+export interface SpeakerService {
   /** Resolves when this utterance starts playing, or at once with "queued" if something else is playing. */
   readonly speak: (
     request: SpeakRequest
@@ -62,7 +66,7 @@ export interface SpeakerShape {
   readonly awaitIdle: Effect.Effect<void>;
 }
 
-export class Speaker extends Context.Service<Speaker, SpeakerShape>()(
+export class Speaker extends Context.Service<Speaker, SpeakerService>()(
   "voix/Speaker"
 ) {}
 
@@ -80,6 +84,8 @@ type Message =
   | { readonly _tag: "end" }
   | { readonly _tag: "error"; readonly error: VoixError };
 
+const Messages = Data.taggedEnum<Message>();
+
 export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
   Layer.effect(
     Speaker,
@@ -87,9 +93,11 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
       const provider = yield* Provider;
       const player = yield* Player;
       const jobs = yield* Queue.unbounded<Job>();
+
       const current = yield* Ref.make(
         Option.none<{ readonly job: Job; readonly fiber: Fiber.Fiber<void> }>()
       );
+
       const active = yield* Ref.make(0);
       let nextId = 1;
 
@@ -100,42 +108,51 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
           if (yield* Ref.get(job.cancelled)) {
             return;
           }
+
           const messages = yield* Queue.unbounded<Message>();
+
           const producer = Stream.fromIterable(job.sentences).pipe(
             Stream.flatMap((text) =>
               provider.synthesize({ speed: job.speed, text, voice: job.voice })
             ),
             Stream.runForEach((chunk) =>
-              Queue.offer(messages, { _tag: "chunk", chunk })
+              Queue.offer(messages, Messages.chunk({ chunk }))
             ),
             Effect.matchEffect({
               onFailure: (error) =>
-                Queue.offer(messages, { _tag: "error", error }),
-              onSuccess: () => Queue.offer(messages, { _tag: "end" }),
+                Queue.offer(messages, Messages.error({ error })),
+              onSuccess: () => Queue.offer(messages, Messages.end()),
             })
           );
+
           yield* Effect.forkChild(producer);
 
           let finished = false;
+
           while (!finished) {
             const first = yield* Queue.take(messages);
-            if (first._tag === "end") {
+
+            if (Messages.$is("end")(first)) {
               break;
             }
-            if (first._tag === "error") {
+
+            if (Messages.$is("error")(first)) {
               return yield* first.error;
             }
+
             const batch: AudioChunk[] = [first.chunk];
             let pendingError: VoixError | undefined;
+
             for (const m of yield* Queue.clear(messages)) {
-              if (m._tag === "chunk") {
+              if (Messages.$is("chunk")(m)) {
                 batch.push(m.chunk);
-              } else if (m._tag === "end") {
+              } else if (Messages.$is("end")(m)) {
                 finished = true;
               } else {
                 pendingError = m.error;
               }
             }
+
             // Start playback synchronously (up to its first async boundary) before reporting "speaking",
             // so a caller that returns from speak() can rely on audio being underway.
             const playing = yield* Effect.forkChild(
@@ -145,8 +162,10 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
               ),
               { startImmediately: true }
             );
+
             yield* Deferred.succeed(job.started, "speaking");
             yield* Fiber.join(playing);
+
             if (pendingError !== undefined) {
               return yield* pendingError;
             }
@@ -165,21 +184,25 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
       const worker = Effect.forever(
         Effect.gen(function* worker() {
           const job = yield* Queue.take(jobs);
+
           const fiber = yield* Effect.forkChild(
             runJob(job).pipe(Effect.ignore)
           );
+
           yield* Ref.set(current, Option.some({ fiber, job }));
           yield* Fiber.await(fiber);
           yield* Ref.set(current, Option.none());
           yield* Ref.update(active, (n) => n - 1);
         })
       );
+
       yield* Effect.forkScoped(worker);
 
       const cancelJob = (job: Job) =>
         Effect.gen(function* cancelJobBody() {
           yield* Ref.set(job.cancelled, true);
           const running = yield* Ref.get(current);
+
           if (Option.isSome(running) && running.value.job.id === job.id) {
             yield* Fiber.interrupt(running.value.fiber);
           }
@@ -191,12 +214,14 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
         Effect.gen(function* speakBody() {
           const voice = request.voice ?? provider.defaultVoice;
           const speed = request.speed ?? DEFAULT_SPEED;
+
           if (!provider.voices.some((v) => v.id === voice)) {
             return yield* new InvalidVoice({
               available: provider.voices.map((v) => v.id),
               voice,
             });
           }
+
           if (
             !Number.isFinite(speed) ||
             speed < SPEED_MIN ||
@@ -208,19 +233,23 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
               speed,
             });
           }
+
           if (request.text.length > MAX_TEXT_LENGTH) {
             return yield* new TextTooLong({
               length: request.text.length,
               max: MAX_TEXT_LENGTH,
             });
           }
+
           const sentences = splitSentences(toSpeakable(request.text));
+
           if (sentences.length === 0) {
             return yield* new EmptyText();
           }
 
           const id = nextId;
           nextId += 1;
+
           const job: Job = {
             cancelled: yield* Ref.make(false),
             id,
@@ -229,13 +258,16 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
             started: yield* Deferred.make<SpeakStatus, VoixError>(),
             voice,
           };
+
           const queuedBehind = yield* Ref.getAndUpdate(active, (n) => n + 1);
           yield* Queue.offer(jobs, job);
+
           const base = {
             queued_behind: queuedBehind,
             sentences: sentences.length,
             voice,
           };
+
           if (queuedBehind > 0) {
             return { status: "queued" as const, ...base };
           }
@@ -247,6 +279,7 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
                 Effect.gen(function* orElse() {
                   yield* cancelJob(job);
                   const s = yield* provider.status;
+
                   return yield* Option.isSome(s.downloading)
                     ? new ModelDownloading(s.downloading.value)
                     : new SynthFailed({
@@ -256,20 +289,25 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
             }),
             Effect.onInterrupt(() => cancelJob(job))
           );
+
           return { status, ...base };
         });
 
       const stop: Effect.Effect<StopResult> = Effect.gen(function* stop() {
         const dropped = yield* Queue.clear(jobs);
+
         for (const job of dropped) {
           yield* Ref.set(job.cancelled, true);
           yield* Deferred.succeed(job.started, "cancelled");
           yield* Ref.update(active, (n) => n - 1);
         }
+
         const running = yield* Ref.get(current);
+
         if (Option.isSome(running)) {
           yield* Fiber.interrupt(running.value.fiber);
         }
+
         return { stopped: dropped.length > 0 || Option.isSome(running) };
       });
 

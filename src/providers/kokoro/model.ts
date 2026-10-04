@@ -18,15 +18,18 @@ export const KOKORO_MODEL = {
 
 export const modelDir = (): string =>
   path.join(modelsDir(), `kokoro-${KOKORO_MODEL.version}`);
+
 export const modelPath = (): string => path.join(modelDir(), "model.onnx");
 
 /** Installed means present with the expected size; the checksum is verified once, right after download. */
 export const isModelInstalled = (): boolean => {
   const p = modelPath();
+
   return fs.existsSync(p) && fs.statSync(p).size === KOKORO_MODEL.size;
 };
 
 const PROGRESS_STEP = 2 * 1024 * 1024;
+
 const FLUSH_STEP = 16 * 1024 * 1024;
 
 export const downloadModel = (
@@ -35,6 +38,7 @@ export const downloadModel = (
   Effect.gen(function* download() {
     const target = modelPath();
     const part = `${target}.part`;
+
     const fail = (reason: string) =>
       new DownloadFailed({ reason, url: KOKORO_MODEL.url });
 
@@ -51,10 +55,13 @@ export const downloadModel = (
       catch: (e) => fail(e instanceof Error ? e.message : String(e)),
       try: (signal) => fetch(KOKORO_MODEL.url, { redirect: "follow", signal }),
     });
+
     const { body } = response;
+
     if (!response.ok || body === null) {
       return yield* fail(`HTTP ${response.status}`);
     }
+
     const total =
       Number(response.headers.get("content-length")) || KOKORO_MODEL.size;
 
@@ -73,10 +80,12 @@ export const downloadModel = (
           hasher.update(chunk);
           writer.write(chunk);
           received += chunk.byteLength;
+
           if (received - lastFlushed >= FLUSH_STEP) {
             lastFlushed = received;
             yield* Effect.promise(() => Promise.resolve(writer.flush()));
           }
+
           if (received - lastReported >= PROGRESS_STEP || received >= total) {
             lastReported = received;
             yield* onProgress(received, total);
@@ -89,14 +98,17 @@ export const downloadModel = (
     );
 
     const actual = hasher.digest("hex");
+
     if (actual !== KOKORO_MODEL.sha256) {
       fs.rmSync(part, { force: true });
+
       return yield* new ChecksumMismatch({
         actual,
         expected: KOKORO_MODEL.sha256,
         path: target,
       });
     }
+
     yield* Effect.try({
       catch: (e) => fail(String(e)),
       try: () => fs.renameSync(part, target),

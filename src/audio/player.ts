@@ -5,7 +5,7 @@ import { PlaybackFailed } from "../core/errors/playback-failed.ts";
 import { PlayerNotFound } from "../core/errors/player-not-found.ts";
 import { encodeWav } from "./wav.ts";
 
-export interface PlayerShape {
+export interface PlayerService {
   readonly name: string;
   /** Play to completion. Interrupting the effect stops playback immediately. */
   readonly play: (
@@ -14,7 +14,7 @@ export interface PlayerShape {
   ) => Effect.Effect<void, PlaybackFailed | PlayerNotFound>;
 }
 
-export class Player extends Context.Service<Player, PlayerShape>()(
+export class Player extends Context.Service<Player, PlayerService>()(
   "voix/Player"
 ) {}
 
@@ -30,22 +30,28 @@ export const AfplayPlayer: Layer.Layer<
   Effect.gen(function* AfplayPlayer() {
     const fs = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
     const play = (pcm: Float32Array, sampleRate: number) =>
       Effect.gen(function* playPcm() {
         if (!(yield* fs.exists(AFPLAY))) {
           return yield* new PlayerNotFound({ platform: process.platform });
         }
+
         const file = yield* fs.makeTempFileScoped({
           prefix: "voix-",
           suffix: ".wav",
         });
+
         yield* fs.writeFile(file, encodeWav(pcm, sampleRate));
+
         const handle = yield* ChildProcess.make(AFPLAY, [file], {
           stderr: "pipe",
           stdin: "ignore",
           stdout: "ignore",
         });
+
         const code = yield* handle.exitCode;
+
         if (code !== 0) {
           return yield* new PlaybackFailed({
             reason: `afplay exited with code ${code}`,
@@ -59,6 +65,7 @@ export const AfplayPlayer: Layer.Layer<
           (e) => new PlaybackFailed({ reason: e.message })
         )
       );
+
     return { name: "afplay", play };
   })
 );
@@ -73,9 +80,11 @@ const selectPlayer = () => {
   if (process.env.VOIX_PLAYER === "none") {
     return NullPlayer;
   }
+
   if (process.platform === "darwin") {
     return AfplayPlayer;
   }
+
   return Layer.succeed(Player, {
     name: "unsupported",
     play: () => new PlayerNotFound({ platform: process.platform }),

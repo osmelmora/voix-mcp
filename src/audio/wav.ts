@@ -6,6 +6,7 @@ export const encodeWav = (
   const dataBytes = pcm.length * 2;
   const buffer = new ArrayBuffer(44 + dataBytes);
   const view = new DataView(buffer);
+
   const ascii = (offset: number, s: string) => {
     for (let i = 0; i < s.length; i += 1) {
       // WAV chunk identifiers are ASCII bytes, not Unicode code points.
@@ -13,6 +14,7 @@ export const encodeWav = (
       view.setUint8(offset + i, s.charCodeAt(i));
     }
   };
+
   ascii(0, "RIFF");
   view.setUint32(4, 36 + dataBytes, true);
   ascii(8, "WAVE");
@@ -26,12 +28,14 @@ export const encodeWav = (
   view.setUint16(34, 16, true);
   ascii(36, "data");
   view.setUint32(40, dataBytes, true);
+
   for (let i = 0; i < pcm.length; i += 1) {
     // The loop bounds guarantee this sample exists.
     // oxlint-disable-next-line typescript/no-non-null-assertion
     const s = Math.max(-1, Math.min(1, pcm[i]!));
     view.setInt16(44 + i * 2, s < 0 ? s * 0x80_00 : s * 0x7f_ff, true);
   }
+
   return new Uint8Array(buffer);
 };
 
@@ -41,16 +45,21 @@ export const concatPcm = (chunks: readonly Float32Array[]): Float32Array => {
     // oxlint-disable-next-line typescript/no-non-null-assertion
     return chunks[0]!;
   }
+
   let total = 0;
+
   for (const c of chunks) {
     total += c.length;
   }
+
   const out = new Float32Array(total);
   let offset = 0;
+
   for (const c of chunks) {
     out.set(c, offset);
     offset += c.length;
   }
+
   return out;
 };
 

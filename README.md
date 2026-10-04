@@ -111,6 +111,10 @@ Use [mise](https://mise.jdx.dev) to install and activate the Bun, Node.js, hk, P
 
 Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The CI workflow checks commit messages, linting, formatting, types, and tests on every push to `main` and every pull request; the release workflow repeats those checks before building.
 
+[Dillon Mulroy's anti-slop rules](https://github.com/dmmulroy/anti-slop) run alongside Ultracite: all 18 generic rules, all five Effect rules, and `oxc/no-accumulating-spread` are errors. The plugins are vendored in `tools/oxlint/anti-slop/`; their source revision and licenses are recorded there. Keep `oxlint` and `@oxlint/plugins` pinned to the same version when upgrading. Apply lint and formatting fixes with `bun run fix`, then verify the result with `bun run check`.
+
+Cyclomatic complexity is capped at 15 per function, overriding Ultracite's default limit of 20.
+
 Git hooks run through [hk](https://hk.jdx.dev), configured in `hk.pkl`. The pre-commit hook runs Oxlint, Oxfmt, and `tsc` on staged files and stages automatic fixes. The commit-msg hook requires [Conventional Commits](https://www.conventionalcommits.org) subjects such as `feat(mcp): add stop tool`. The pre-push hook runs the same checks and the tests. Run `hk check --all` to check everything at once, or `hk fix --all` to apply fixes. Set `HK=0` to skip the hooks once.
 
 Releases use [cocogitto](https://docs.cocogitto.io), configured in `cog.toml`. `cog bump --auto` picks the next version from the commits since the last tag, sets it in `package.json`, prepends the release to `CHANGELOG.md`, then commits and tags it. Pushing the tag runs the release workflow, which uses that version's changelog entry as the GitHub release notes. Run `cog changelog` to preview unreleased changes.

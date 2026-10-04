@@ -12,6 +12,7 @@ export class ModelDownloading extends taggedError<ModelDownloading>()(
   override get message() {
     const pct =
       this.total > 0 ? Math.floor((this.received / this.total) * 100) : 0;
+
     return `The speech model is still downloading (${pct}%). Tell the user and try again shortly.`;
   }
 }

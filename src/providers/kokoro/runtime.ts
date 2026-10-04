@@ -24,11 +24,14 @@ const materializeDylib = async (): Promise<void> => {
   if (!isEmbedded()) {
     return;
   }
+
   const dest = dylibDestination();
   const src = Bun.file(dylibAsset);
+
   if (fs.existsSync(dest) && fs.statSync(dest).size === src.size) {
     return;
   }
+
   await Bun.write(dest, src);
 };
 
@@ -36,6 +39,7 @@ let ortPromise: Promise<Ort> | undefined;
 
 const importOrt = async (): Promise<Ort> => {
   await materializeDylib();
+
   return import("onnxruntime-node");
 };
 

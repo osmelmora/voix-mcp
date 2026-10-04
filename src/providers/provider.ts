@@ -43,7 +43,7 @@ export type SynthError =
   | DownloadFailed
   | ChecksumMismatch;
 
-export interface ProviderShape {
+export interface ProviderService {
   readonly id: string;
   readonly voices: readonly Voice[];
   readonly defaultVoice: string;
@@ -63,6 +63,6 @@ export interface ProviderShape {
   ) => Stream.Stream<AudioChunk, SynthError>;
 }
 
-export class Provider extends Context.Service<Provider, ProviderShape>()(
+export class Provider extends Context.Service<Provider, ProviderService>()(
   "voix/Provider"
 ) {}

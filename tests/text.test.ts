@@ -18,6 +18,7 @@ describe("toSpeakable", () => {
       "",
       "See [the board](https://example.com/board) for details.",
     ].join("\n");
+
     const out = toSpeakable(md);
     expect(out).toBe(
       "Daily update.\nYou have three meetings today:\nDesign review at 10\n1:1 with Sam\nSee the board for details."
@@ -54,9 +55,11 @@ describe("splitSentences", () => {
     const long = Array.from({ length: 200 }, (_, i) => `word${i}`).join(" ");
     const parts = splitSentences(long);
     expect(parts.length).toBeGreaterThan(1);
+
     for (const p of parts) {
       expect(p.length).toBeLessThanOrEqual(400);
     }
+
     expect(parts.join(" ")).toBe(long);
   });
 

@@ -1,5 +1,7 @@
 // Embedded Kokoro voices. The .bin files are [510, 1, 256] float32 style vectors
 // from onnx-community/Kokoro-82M-v1.0-ONNX (Apache-2.0).
+import { Schema } from "effect";
+
 import type { Voice } from "../provider.ts";
 import af_alloy from "./assets/voices/af_alloy.bin" with { type: "file" };
 import af_aoede from "./assets/voices/af_aoede.bin" with { type: "file" };
@@ -30,7 +32,7 @@ import bm_fable from "./assets/voices/bm_fable.bin" with { type: "file" };
 import bm_george from "./assets/voices/bm_george.bin" with { type: "file" };
 import bm_lewis from "./assets/voices/bm_lewis.bin" with { type: "file" };
 
-export const VOICE_FILES: Record<string, string> = {
+export const VOICE_FILES: Record<KokoroVoiceId, string> = {
   af_alloy,
   af_aoede,
   af_bella,
@@ -94,10 +96,14 @@ export const KOKORO_VOICE_IDS = [
 
 export type KokoroVoiceId = (typeof KOKORO_VOICE_IDS)[number];
 
+export const isKokoroVoiceId = Schema.is(Schema.Literals(KOKORO_VOICE_IDS));
+
 export const DEFAULT_VOICE: KokoroVoiceId = "af_heart";
 
-const describe = (id: string): Voice => {
-  const [prefix, raw] = id.split("_") as [string, string];
+const describe = (id: KokoroVoiceId): Voice => {
+  const prefix = id.slice(0, 2);
+  const raw = id.slice(3);
+
   return {
     gender: prefix.charAt(1) === "f" ? "female" : "male",
     id,
