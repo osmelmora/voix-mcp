@@ -6,9 +6,7 @@ Local voice output for AI agents. One executable, one MCP tool, no cloud.
 Agent ──MCP──▶ voix ──▶ Kokoro (local ONNX) ──▶ your speakers
 ```
 
-An agent gathers whatever it needs with its other tools, writes a spoken summary, and calls
-`speak`. voix synthesizes it with [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) on the
-CPU and plays it. First audio starts in about a second; nothing leaves the machine.
+An agent gathers whatever it needs with its other tools, writes a spoken summary, and calls `speak`. voix synthesizes it with [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) on the CPU and plays it. First audio starts in about a second; nothing leaves the machine.
 
 **MVP scope:** macOS on Apple Silicon. See [docs/SPEC.md](docs/SPEC.md) for every design decision.
 
@@ -29,8 +27,7 @@ bun run build            # → dist/voix-darwin-arm64 (≈120 MB)
 cp dist/voix-darwin-arm64 ~/.local/bin/voix
 ```
 
-The binary is not code-signed. `curl` downloads run as-is; if you downloaded it with a browser run
-`xattr -d com.apple.quarantine ~/.local/bin/voix` once.
+The binary is not code-signed. `curl` downloads run as-is; if you downloaded it with a browser run `xattr -d com.apple.quarantine ~/.local/bin/voix` once.
 
 ## First run
 
@@ -38,8 +35,7 @@ The binary is not code-signed. `curl` downloads run as-is; if you downloaded it 
 voix say "Hello"
 ```
 
-On first use voix downloads the Kokoro model (326 MB, fp32, Apache-2.0) into `~/.cache/voix` and
-verifies its SHA-256. After that everything is offline. To do the download ahead of time:
+On first use voix downloads the Kokoro model (326 MB, fp32, Apache-2.0) into `~/.cache/voix` and verifies its SHA-256. After that everything is offline. To do the download ahead of time:
 
 ```bash
 voix setup
@@ -57,21 +53,16 @@ Add voix to your MCP client configuration (Claude Code, Claude Desktop, Cursor, 
 }
 ```
 
-If `voix` is not on the client's `PATH`, use the absolute path, for example
-`"/Users/you/.local/bin/voix"`.
+If `voix` is not on the client's `PATH`, use the absolute path, for example `"/Users/you/.local/bin/voix"`.
 
 The agent gets two tools:
 
 | tool | what it does |
-|---|---|
+| --- | --- |
 | `speak` `{ text, voice?, speed? }` | Speak text. Returns as soon as the first sentence starts playing (or `queued` if something else is playing). |
 | `stop` | Stop immediately and drop the queue. |
 
-Errors come back as typed tool errors (`EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`,
-`ModelDownloading`, `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`,
-`SynthFailed`). The server also publishes short usage instructions and the resource
-`skill://voix/SKILL.md`, which is the same text as [skills/voix/SKILL.md](skills/voix/SKILL.md).
-Copy that folder into your agent's skills directory if it supports skills.
+Errors come back as typed tool errors (`EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`, `ModelDownloading`, `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`, `SynthFailed`). The server also publishes short usage instructions and the resource `skill://voix/SKILL.md`, which is the same text as [skills/voix/SKILL.md](skills/voix/SKILL.md). Copy that folder into your agent's skills directory if it supports skills.
 
 Then try:
 
@@ -94,28 +85,29 @@ voix mcp                                   # MCP server over stdio
 
 There is no config file. Defaults: voice `af_heart`, speed `1.0`.
 
-| variable | effect |
-|---|---|
-| `VOIX_HOME` | where models are stored (default `~/.cache/voix`) |
-| `VOIX_PLAYER=none` | disable audio output (tests, CI) |
+| variable           | effect                                            |
+| ------------------ | ------------------------------------------------- |
+| `VOIX_HOME`        | where models are stored (default `~/.cache/voix`) |
+| `VOIX_PLAYER=none` | disable audio output (tests, CI)                  |
 
 ## How it works
 
-- **Runtime:** TypeScript on Bun, compiled with `bun build --compile`. Effect 4 for services,
-  typed errors, the queue, interruption, and the MCP and CLI layers.
-- **Inference:** `onnxruntime-node` on the CPU with about 150 lines of Kokoro glue and the
-  eSpeak NG phonemizer in WebAssembly. No Python, no transformers.js.
-- **Pipelining:** text is split into sentences; the first plays while the rest synthesize, and
-  each later playback chunk is everything that finished in the meantime.
-- **Playback:** a temp WAV played by `/usr/bin/afplay` as a scoped child process, killed on
-  `stop`, on request cancellation, and on exit.
-- **What is inside the binary:** Bun runtime, the ONNX Runtime library, 28 voice files, the
-  tokenizer, the code. Only the model is downloaded.
+- **Runtime:** TypeScript on Bun, compiled with `bun build --compile`. Effect 4 for services, typed errors, the queue, interruption, and the MCP and CLI layers.
+- **Inference:** `onnxruntime-node` on the CPU with about 150 lines of Kokoro glue and the eSpeak NG phonemizer in WebAssembly. No Python, no transformers.js.
+- **Pipelining:** text is split into sentences; the first plays while the rest synthesize, and each later playback chunk is everything that finished in the meantime.
+- **Playback:** a temp WAV played by `/usr/bin/afplay` as a scoped child process, killed on `stop`, on request cancellation, and on exit.
+- **What is inside the binary:** Bun runtime, the ONNX Runtime library, 28 voice files, the tokenizer, the code. Only the model is downloaded.
 
 ## Development
 
+Use [mise](https://mise.jdx.dev) to install and activate the Bun and Node.js versions pinned in `mise.toml`. Node runs the lint and format tooling. The release workflow uses the same mise configuration.
+
+Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The release workflow checks linting and formatting before building.
+
 ```bash
+mise install
 bun install
+bun run check
 bun run typecheck
 VOIX_PLAYER=none bun test          # synthesis and MCP tests run only if the model is cached
 bun run src/main.ts say "dev mode"
@@ -124,8 +116,7 @@ bun run build && VOIX_BIN=./dist/voix-darwin-arm64 VOIX_PLAYER=none bun test tes
 
 ## Known limitations
 
-- darwin-arm64 only. Linux and Windows cross-compile but are untested; Intel Macs lack a prebuilt
-  ONNX Runtime in this version.
+- darwin-arm64 only. Linux and Windows cross-compile but are untested; Intel Macs lack a prebuilt ONNX Runtime in this version.
 - English voices only. Kokoro's other languages need a different grapheme-to-phoneme stack.
 - The embedded eSpeak NG build is GPL-3; see [NOTICE](NOTICE).
 

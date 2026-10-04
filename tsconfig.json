@@ -2,6 +2,7 @@
   "compilerOptions": {
     "target": "ESNext",
     "module": "Preserve",
+    "moduleDetection": "force",
     "moduleResolution": "bundler",
     "lib": ["ESNext", "DOM"],
     "types": ["bun-types"],
@@ -13,5 +14,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "tests", "scripts"]
+  "include": ["src", "tests", "scripts", "*.config.ts"]
 }

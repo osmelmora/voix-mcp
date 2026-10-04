@@ -1,8 +1,10 @@
-import fs from "node:fs"
-import path from "node:path"
-import { Effect, Stream } from "effect"
-import { ChecksumMismatch, DownloadFailed } from "../../core/errors.ts"
-import { modelsDir } from "../../core/paths.ts"
+import fs from "node:fs";
+import path from "node:path";
+
+import { Effect, Stream } from "effect";
+
+import { ChecksumMismatch, DownloadFailed } from "../../core/errors.ts";
+import { modelsDir } from "../../core/paths.ts";
 
 export const KOKORO_MODEL = {
   version: "v1.0",
@@ -10,71 +12,92 @@ export const KOKORO_MODEL = {
   url: "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx",
   size: 325_532_232,
   sha256: "8fbea51ea711f2af382e88c833d9e288c6dc82ce5e98421ea61c058ce21a34cb",
-  license: "Apache-2.0"
-} as const
+  license: "Apache-2.0",
+} as const;
 
-export const modelDir = (): string => path.join(modelsDir(), `kokoro-${KOKORO_MODEL.version}`)
-export const modelPath = (): string => path.join(modelDir(), "model.onnx")
+export const modelDir = (): string =>
+  path.join(modelsDir(), `kokoro-${KOKORO_MODEL.version}`);
+export const modelPath = (): string => path.join(modelDir(), "model.onnx");
 
 /** Installed means present with the expected size; the checksum is verified once, right after download. */
 export const isModelInstalled = (): boolean => {
-  const p = modelPath()
-  return fs.existsSync(p) && fs.statSync(p).size === KOKORO_MODEL.size
-}
+  const p = modelPath();
+  return fs.existsSync(p) && fs.statSync(p).size === KOKORO_MODEL.size;
+};
 
-const PROGRESS_STEP = 2 * 1024 * 1024
-const FLUSH_STEP = 16 * 1024 * 1024
+const PROGRESS_STEP = 2 * 1024 * 1024;
+const FLUSH_STEP = 16 * 1024 * 1024;
 
 export const downloadModel = (
   onProgress: (received: number, total: number) => Effect.Effect<void>
 ): Effect.Effect<void, DownloadFailed | ChecksumMismatch> =>
   Effect.gen(function* () {
-    const target = modelPath()
-    const part = `${target}.part`
-    const fail = (reason: string) => new DownloadFailed({ url: KOKORO_MODEL.url, reason })
+    const target = modelPath();
+    const part = `${target}.part`;
+    const fail = (reason: string) =>
+      new DownloadFailed({ url: KOKORO_MODEL.url, reason });
 
-    yield* Effect.try({ try: () => fs.mkdirSync(modelDir(), { recursive: true }), catch: (e) => fail(String(e)) })
-    yield* Effect.try({ try: () => fs.rmSync(part, { force: true }), catch: (e) => fail(String(e)) })
+    yield* Effect.try({
+      try: () => fs.mkdirSync(modelDir(), { recursive: true }),
+      catch: (e) => fail(String(e)),
+    });
+    yield* Effect.try({
+      try: () => fs.rmSync(part, { force: true }),
+      catch: (e) => fail(String(e)),
+    });
 
     const response = yield* Effect.tryPromise({
       try: (signal) => fetch(KOKORO_MODEL.url, { signal, redirect: "follow" }),
-      catch: (e) => fail(e instanceof Error ? e.message : String(e))
-    })
-    if (!response.ok || response.body === null) return yield* fail(`HTTP ${response.status}`)
-    const total = Number(response.headers.get("content-length")) || KOKORO_MODEL.size
+      catch: (e) => fail(e instanceof Error ? e.message : String(e)),
+    });
+    const { body } = response;
+    if (!response.ok || body === null) {
+      return yield* fail(`HTTP ${response.status}`);
+    }
+    const total =
+      Number(response.headers.get("content-length")) || KOKORO_MODEL.size;
 
-    const hasher = new Bun.CryptoHasher("sha256")
-    const writer = Bun.file(part).writer()
-    let received = 0
-    let lastReported = 0
-    let lastFlushed = 0
+    const hasher = new Bun.CryptoHasher("sha256");
+    const writer = Bun.file(part).writer();
+    let received = 0;
+    let lastReported = 0;
+    let lastFlushed = 0;
 
     yield* Stream.fromReadableStream({
-      evaluate: () => response.body!,
-      onError: (e) => fail(e instanceof Error ? e.message : String(e))
+      evaluate: () => body,
+      onError: (e) => fail(e instanceof Error ? e.message : String(e)),
     }).pipe(
       Stream.runForEach((chunk) =>
         Effect.gen(function* () {
-          hasher.update(chunk)
-          writer.write(chunk)
-          received += chunk.byteLength
+          hasher.update(chunk);
+          writer.write(chunk);
+          received += chunk.byteLength;
           if (received - lastFlushed >= FLUSH_STEP) {
-            lastFlushed = received
-            yield* Effect.promise(() => Promise.resolve(writer.flush()))
+            lastFlushed = received;
+            yield* Effect.promise(() => Promise.resolve(writer.flush()));
           }
           if (received - lastReported >= PROGRESS_STEP || received >= total) {
-            lastReported = received
-            yield* onProgress(received, total)
+            lastReported = received;
+            yield* onProgress(received, total);
           }
         })
       ),
-      Effect.ensuring(Effect.promise(() => Promise.resolve(writer.end())).pipe(Effect.ignore))
-    )
+      Effect.ensuring(
+        Effect.promise(() => Promise.resolve(writer.end())).pipe(Effect.ignore)
+      )
+    );
 
-    const actual = hasher.digest("hex")
+    const actual = hasher.digest("hex");
     if (actual !== KOKORO_MODEL.sha256) {
-      fs.rmSync(part, { force: true })
-      return yield* new ChecksumMismatch({ path: target, expected: KOKORO_MODEL.sha256, actual })
+      fs.rmSync(part, { force: true });
+      return yield* new ChecksumMismatch({
+        path: target,
+        expected: KOKORO_MODEL.sha256,
+        actual,
+      });
     }
-    yield* Effect.try({ try: () => fs.renameSync(part, target), catch: (e) => fail(String(e)) })
-  })
+    yield* Effect.try({
+      try: () => fs.renameSync(part, target),
+      catch: (e) => fail(String(e)),
+    });
+  });
