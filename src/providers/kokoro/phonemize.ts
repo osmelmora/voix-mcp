@@ -8,12 +8,14 @@ import tokenizer from "./assets/tokenizer.json";
 import { normalizeText } from "./normalize.ts";
 
 export const SAMPLE_RATE = 24_000;
+
 /** model_max_length 512 minus the two "$" padding tokens. */
 export const MAX_PHONEME_TOKENS = 510;
 
 const VOCAB: Record<string, number> = tokenizer.model.vocab;
 
 const PUNCT = ';:,.!?¡¿—…"«»“”(){}[]';
+
 const PUNCT_RE = new RegExp(
   `(\\s*[${PUNCT.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&")}]+\\s*)+`,
   "gu"
@@ -26,6 +28,7 @@ const phonemizeRaw = async (text: string, lang: Lang): Promise<string> => {
   const normalized = normalizeText(text);
   const parts: string[] = [];
   let last = 0;
+
   for (const m of normalized.matchAll(PUNCT_RE)) {
     if (last < m.index) {
       // The eSpeak WASM instance is shared; process each segment sequentially.
@@ -34,17 +37,22 @@ const phonemizeRaw = async (text: string, lang: Lang): Promise<string> => {
         normalized.slice(last, m.index),
         espeakLang
       );
+
       parts.push(phonemes.join(" "));
     }
+
     if (m[0].length > 0) {
       parts.push(m[0]);
     }
+
     last = m.index + m[0].length;
   }
+
   if (last < normalized.length) {
     const phonemes = await espeak(normalized.slice(last), espeakLang);
     parts.push(phonemes.join(" "));
   }
+
   let ps = parts
     .join("")
     .replaceAll("kəkˈoːɹoʊ", "kˈoʊkəɹoʊ")
@@ -55,9 +63,11 @@ const phonemizeRaw = async (text: string, lang: Lang): Promise<string> => {
     .replaceAll("ɬ", "l")
     .replaceAll(/(?<=[a-zɹː])(?=hˈʌndɹɪd)/gu, " ")
     .replaceAll(/ z(?=[;:,.!?¡¿—…"«»“” ]|$)/gu, "z");
+
   if (lang === "en-US") {
     ps = ps.replaceAll(/(?<=nˈaɪn)ti(?!ː)/gu, "di");
   }
+
   return ps.trim();
 };
 
@@ -74,12 +84,15 @@ export const phonemize = (
 /** Map phonemes to token ids, wrapped in the "$" (0) padding tokens. Unknown characters are dropped. */
 export const tokenize = (phonemes: string): number[] => {
   const ids: number[] = [];
+
   for (const ch of phonemes) {
     const id = VOCAB[ch];
+
     if (id !== undefined) {
       ids.push(id);
     }
   }
+
   return [0, ...ids.slice(0, MAX_PHONEME_TOKENS), 0];
 };
 
@@ -91,10 +104,13 @@ export const splitPhonemes = (
   if ([...phonemes].length <= max) {
     return [phonemes];
   }
+
   const pieces: string[] = [];
   let current = "";
+
   for (const word of phonemes.split(" ")) {
     const candidate = current.length === 0 ? word : `${current} ${word}`;
+
     if ([...candidate].length > max && current.length > 0) {
       pieces.push(current);
       current = word;
@@ -102,8 +118,10 @@ export const splitPhonemes = (
       current = candidate;
     }
   }
+
   if (current.length > 0) {
     pieces.push(current);
   }
+
   return pieces;
 };

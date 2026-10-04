@@ -28,23 +28,29 @@ const mb = (n: number) => (n / (1024 * 1024)).toFixed(0);
 const prepareWithProgress = Effect.gen(function* prepareWithProgress() {
   const provider = yield* Provider;
   const before = yield* provider.status;
+
   if (before.installed) {
     return yield* provider.prepare;
   }
+
   yield* Console.error(
     `Kokoro model not installed. Downloading ${mb(KOKORO_MODEL.size)} MB to ${before.modelPath} (one time)...`
   );
+
   const ticker = Effect.forever(
     Effect.gen(function* ticker() {
       const s = yield* provider.status;
+
       if (Option.isSome(s.downloading)) {
         const { received, total } = s.downloading.value;
         const pct = total > 0 ? Math.floor((received / total) * 100) : 0;
         process.stderr.write(`\r  ${pct}%  ${mb(received)} / ${mb(total)} MB`);
       }
+
       yield* Effect.sleep("200 millis");
     })
   );
+
   yield* provider.prepare.pipe(Effect.raceFirst(ticker));
   process.stderr.write("\r");
   yield* Console.error("✓ Model installed");
@@ -53,19 +59,24 @@ const prepareWithProgress = Effect.gen(function* prepareWithProgress() {
 const concatBytes = (chunks: readonly Uint8Array[]): Uint8Array => {
   const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
   let offset = 0;
+
   for (const c of chunks) {
     out.set(c, offset);
     offset += c.byteLength;
   }
+
   return out;
 };
 
 const readStdin = Effect.gen(function* readStdin() {
   const stdio = yield* Stdio.Stdio;
+
   if (yield* stdio.stdinIsTerminal) {
     return "";
   }
+
   const chunks = yield* Stream.runCollect(stdio.stdin);
+
   return new TextDecoder().decode(concatBytes(chunks));
   // Effect.catch handles typed Effects, not Promise rejections.
   // oxlint-disable-next-line promise/prefer-await-to-then
@@ -75,16 +86,19 @@ const voiceFlag = Flag.String("voice").pipe(
   Flag.withDescription("Voice id (see `voix voices`)"),
   Flag.withDefault(DEFAULT_VOICE)
 );
+
 const speedFlag = Flag.Finite("speed").pipe(
   Flag.withAlias("s"),
   Flag.withDescription(`Speaking rate, ${SPEED_MIN} to ${SPEED_MAX}`),
   Flag.withDefault(DEFAULT_SPEED)
 );
+
 const outFlag = Flag.String("out").pipe(
   Flag.withAlias("o"),
   Flag.withDescription("Write a WAV file instead of playing"),
   Flag.optional
 );
+
 const textArg = Argument.String("text").pipe(
   Argument.withDescription("Text to speak; reads stdin when omitted"),
   Argument.variadic()
@@ -98,29 +112,37 @@ const say = Command.make(
       const input = (
         text.length > 0 ? text.join(" ") : yield* readStdin
       ).trim();
+
       if (input.length === 0) {
         yield* Console.error(
           "usage: voix say <text>   (or pipe text on stdin)"
         );
         process.exitCode = 2;
+
         return;
       }
+
       yield* prepareWithProgress;
+
       if (Option.isSome(out)) {
         const provider = yield* Provider;
         const sentences = splitSentences(toSpeakable(input));
+
         const chunks = yield* Stream.fromIterable(sentences).pipe(
           Stream.flatMap((s) => provider.synthesize({ speed, text: s, voice })),
           Stream.runCollect
         );
+
         const pcm = concatPcm(chunks.map((c) => c.pcm));
         const rate = chunks[0]?.sampleRate ?? 24_000;
         yield* Effect.promise(() => Bun.write(out.value, encodeWav(pcm, rate)));
         yield* Console.log(
           `wrote ${out.value} (${durationSeconds(pcm, rate).toFixed(1)}s)`
         );
+
         return;
       }
+
       const speaker = yield* Speaker;
       yield* speaker.speak({ speed, text: input, voice });
       yield* speaker.awaitIdle;
@@ -139,6 +161,7 @@ const setup = Command.make("setup", {}, () =>
 const voices = Command.make("voices", {}, () =>
   Effect.gen(function* voicesHandler() {
     const provider = yield* Provider;
+
     for (const v of provider.voices) {
       const mark = v.id === provider.defaultVoice ? "*" : " ";
       yield* Console.log(
@@ -153,6 +176,7 @@ const status = Command.make("status", {}, () =>
     const provider = yield* Provider;
     const player = yield* Player;
     const s = yield* provider.status;
+
     const lines = [
       `voix ${VERSION}`,
       `platform:   ${process.platform}-${process.arch}`,
@@ -164,6 +188,7 @@ const status = Command.make("status", {}, () =>
       `player:     ${player.name}`,
       `onnx dylib: ${isEmbedded() ? dylibDestination() : "node_modules (dev)"}`,
     ];
+
     yield* Console.log(lines.join("\n"));
   })
 ).pipe(Command.withDescription("Show installation state"));

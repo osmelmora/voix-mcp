@@ -23,6 +23,7 @@ export const VoixErrorSchema = Schema.Union([
   PlaybackFailed,
   SynthFailed,
 ]);
+
 export type VoixError = typeof VoixErrorSchema.Type;
 
 export type PrepareError = DownloadFailed | ChecksumMismatch | SynthFailed;

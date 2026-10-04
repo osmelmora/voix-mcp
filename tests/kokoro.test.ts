@@ -13,6 +13,7 @@ import { KOKORO_VOICES } from "../src/providers/kokoro/voices.ts";
 import { Provider } from "../src/providers/provider.ts";
 
 const SENTENCE = "Hello from voix. This is a test of local speech.";
+
 // Recorded from kokoro-js 1.2.1 for the same input (see docs/SPEC.md §11).
 const EXPECTED_PHONEMES =
   "həlˈoʊ fɹʌm vwˈɑː. ðɪs ɪz ɐ tˈɛst ʌv lˈoʊkəl spˈiːtʃ.";
@@ -36,9 +37,11 @@ describe("kokoro phonemizer", () => {
       Array.from({ length: 100 }, () => "abcdefghi").join(" "),
       50
     );
+
     for (const p of pieces) {
       expect([...p].length).toBeLessThanOrEqual(50);
     }
+
     expect(pieces.join(" ")).toBe(
       Array.from({ length: 100 }, () => "abcdefghi").join(" ")
     );
@@ -59,6 +62,7 @@ describe("kokoro synthesis", () => {
       const chunks = await Effect.runPromise(
         Effect.gen(function* chunks() {
           const provider = yield* Provider;
+
           return yield* Stream.runCollect(
             provider.synthesize({
               speed: 1,
@@ -68,6 +72,7 @@ describe("kokoro synthesis", () => {
           );
         }).pipe(Effect.provide(KokoroProvider), Effect.scoped)
       );
+
       expect(chunks.length).toBe(1);
       // The assertion above verifies that synthesis returned exactly one chunk.
       // oxlint-disable-next-line typescript/no-non-null-assertion
@@ -86,6 +91,7 @@ describe("kokoro synthesis", () => {
       const error = await Effect.runPromise(
         Effect.gen(function* error() {
           const provider = yield* Provider;
+
           return yield* Effect.flip(
             Stream.runCollect(
               provider.synthesize({ speed: 1, text: "x", voice: "zz_nobody" })
@@ -93,6 +99,7 @@ describe("kokoro synthesis", () => {
           );
         }).pipe(Effect.provide(KokoroProvider), Effect.scoped)
       );
+
       expect(error._tag).toBe("InvalidVoice");
     }
   );

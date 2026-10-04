@@ -58,6 +58,8 @@ export const VoixToolkit = Toolkit.make(Speak, Stop);
 
 const PROGRESS_INTERVAL = "2 seconds";
 
+const decodeProgressToken = Schema.decodeUnknownOption(McpSchema.ProgressToken);
+
 const ToolHandlers = VoixToolkit.toLayer(
   Effect.gen(function* ToolHandlers() {
     const speaker = yield* Speaker;
@@ -69,6 +71,7 @@ const ToolHandlers = VoixToolkit.toLayer(
         Effect.gen(function* reportProgressTick() {
           yield* Effect.sleep(PROGRESS_INTERVAL);
           const status = yield* provider.status;
+
           if (Option.isSome(status.downloading)) {
             const { received, total } = status.downloading.value;
             yield* server.notifications["notifications/progress"]({
@@ -85,19 +88,17 @@ const ToolHandlers = VoixToolkit.toLayer(
       speak: (params) =>
         Effect.gen(function* speak() {
           const ctx = yield* McpSchema.McpRequestContext;
-          const raw = ctx.requestMetadata?.progressToken;
-          const token =
-            typeof raw === "string" || typeof raw === "number"
-              ? raw
-              : undefined;
+          const token = decodeProgressToken(ctx.requestMetadata?.progressToken);
+
           const run = speaker.speak({
             speed: params.speed,
             text: params.text,
             voice: params.voice,
           });
-          return token === undefined
-            ? yield* run
-            : yield* run.pipe(Effect.raceFirst(reportProgress(token)));
+
+          return Option.isSome(token)
+            ? yield* run.pipe(Effect.raceFirst(reportProgress(token.value)))
+            : yield* run;
         }),
       stop: () => speaker.stop,
     };

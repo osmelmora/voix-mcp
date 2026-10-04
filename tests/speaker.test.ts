@@ -43,6 +43,7 @@ interface Played {
 const makeRecorder = (playMs: number) => {
   const played: Played[] = [];
   const start = Date.now();
+
   const layer = Layer.succeed(Player, {
     name: "recorder",
     play: (pcm) =>
@@ -51,6 +52,7 @@ const makeRecorder = (playMs: number) => {
         yield* Effect.sleep(`${playMs} millis`);
       }),
   });
+
   return { layer, played };
 };
 
@@ -60,12 +62,15 @@ const run = <A, E>(
   body: (speaker: Speaker["Service"], played: Played[]) => Effect.Effect<A, E>
 ) => {
   const rec = makeRecorder(playMs);
+
   const layer = SpeakerLive.pipe(
     Layer.provide(Layer.mergeAll(FakeProvider(synthMs), rec.layer))
   );
+
   return Effect.runPromise(
     Effect.gen(function* runScenario() {
       const speaker = yield* Speaker;
+
       return yield* body(speaker, rec.played);
     }).pipe(Effect.provide(layer), Effect.scoped)
   );
@@ -134,18 +139,25 @@ describe("Speaker", () => {
         const empty = yield* Effect.flip(
           speaker.speak({ text: "## \n```x```" })
         );
+
         expect(empty._tag).toBe("EmptyText");
+
         const long = yield* Effect.flip(
           speaker.speak({ text: "a".repeat(10_001) })
         );
+
         expect(long._tag).toBe("TextTooLong");
+
         const voice = yield* Effect.flip(
           speaker.speak({ text: "hi", voice: "nope" })
         );
+
         expect(voice._tag).toBe("InvalidVoice");
+
         const speed = yield* Effect.flip(
           speaker.speak({ speed: 3, text: "hi" })
         );
+
         expect(speed._tag).toBe("InvalidSpeed");
       })
     );
