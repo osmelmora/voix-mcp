@@ -259,9 +259,12 @@ const mainMoved = (release: Release) => {
     release.runId
   );
 
+  // The successor waits in the same concurrency group, so its outcome is unknowable here.
+  // It plans everything since the last tag, this commit included; if it fails or is
+  // cancelled, re-running it (or any later green run on main) still releases this commit.
   if (successor.kind === "found") {
     notice(
-      `main moved to ${successor.main}; ${successor.run.url} releases it.`
+      `main moved to ${successor.main}; ${successor.run.url} releases it. If that run fails or is cancelled, re-run it.`
     );
 
     return;

@@ -683,7 +683,7 @@ describe("release script", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(
-        `::notice::main moved to ${newer}; https://github.com/owner/voix/actions/runs/200 releases it.`
+        `::notice::main moved to ${newer}; https://github.com/owner/voix/actions/runs/200 releases it. If that run fails or is cancelled, re-run it.`
       );
       expect(result.outputs).toBe("previous=kept\n");
       expect(result.ghCalls).toEqual([RELEASES_CALL, runsCall(newer)]);
