@@ -13,10 +13,10 @@ Status: settled after a three-round design grill on 2026-10-04. Every decision b
 ```text
 User:  "Give me my daily update out loud."
 Agent: gathers data → writes a spoken summary → calls speak({ text })
-voix:  normalizes text → Kokoro (local ONNX) → afplay → speakers
+voix:  normalizes text → Kokoro (local ONNX) → platform player → speakers
 ```
 
-**Supported platform.** macOS on Apple Silicon (`darwin-arm64`) only. The code keeps the player and native-runtime lookups behind small platform switches so Linux is a follow-up, not a redesign, but nothing else is built, tested or claimed.
+**Supported platforms.** macOS on Apple Silicon (`darwin-arm64`) and Linux x64 with glibc (`linux-x64`). Each has a matching native ONNX runtime, compiled smoke coverage, and a release asset. Linux arm64, Intel Macs, Windows, and musl are not supported yet.
 
 **Success criteria.**
 
@@ -25,7 +25,7 @@ voix:  normalizes text → Kokoro (local ONNX) → afplay → speakers
 3. `stop` interrupts speech immediately.
 4. The whole thing is one executable plus one downloaded model file.
 
-**Explicit non-goals.** Web UI, voice cloning, remote/HTTP server, cloud providers, auth, telemetry, SSML, multiple simultaneous models, plugin marketplace, OpenAI compatible API, playback queues beyond strict serial order, a daemon, a config file, `synthesize`/`list_voices`/`status` MCP tools, npm publishing, code signing, any platform other than darwin-arm64, any provider other than Kokoro.
+**Explicit non-goals.** Web UI, voice cloning, remote/HTTP server, cloud providers, auth, telemetry, SSML, multiple simultaneous models, plugin marketplace, OpenAI compatible API, playback queues beyond strict serial order, a daemon, a config file, `synthesize`/`list_voices`/`status` MCP tools, npm publishing, code signing, platforms other than darwin-arm64 and linux-x64 (glibc), any provider other than Kokoro.
 
 ## 2. Architecture
 
@@ -39,9 +39,9 @@ Shell ──argv───────▶ voix say ─┤
                           ▼        ▼
                        Provider  Player         Context.Service interfaces
                           │        │
-                       Kokoro    afplay         onnxruntime-node + phonemizer / child process
+                       Kokoro    platform player   onnxruntime-node + phonemizer / child process
                           │
-                       model.onnx (~/.cache/voix)   embedded: voices, tokenizer, ORT dylib
+                       model.onnx (~/.cache/voix)   embedded: voices, tokenizer, ORT library
 ```
 
 One process. The MCP stdio server lives for the agent session, so the model stays warm without a daemon. `voix say` is the same core driven from argv.
@@ -179,10 +179,10 @@ It is selected by swapping the layer passed to the Speaker; the Speaker, CLI and
 | Language/runtime | TypeScript on Bun 1.4.2 (developed and measured on 1.3.9; 1.4.2 verified identically), `bun build --compile` | Single-file executables, cross-compilation, embeds assets. Measured working. |
 | Framework | Effect 4.0.0 (pinned exactly) | Typed errors, fibers for stop/cancel, scoped child processes, built-in MCP server and CLI. +32 KB, +2.5 ms over hello world. |
 | Inference | `onnxruntime-node` 1.30.0 native CPU + `phonemizer` 1.2.1 (eSpeak NG in WASM) + ~150 lines of own Kokoro glue | 2× faster than q8, ~5× real time at fp32. No transformers.js, no sharp. Byte-identical phonemes to kokoro-js. WASM-only path measured slower than real time in Bun. |
-| ONNX runtime dylib | embedded as an asset, copied to the per-user temp dir on first use, then `onnxruntime-node` is imported dynamically | Bun extracts the `.node` addon to `$TMPDIR` and its rpath is `@loader_path`; the companion dylib must be there. Bun's own fix is unreleased. |
+| ONNX runtime library | only the target platform's library is embedded; macOS copies the dylib beside Bun's extracted addon; Linux preloads the embedded `.so` through `bun:ffi` before importing `onnxruntime-node` | macOS resolves `@loader_path`; Linux resolves the preloaded library by SONAME. Bun materializes the Linux library under a user/content-specific temp filename instead of a shared `/tmp/libonnxruntime.so.1`. |
 | Model precision | fp32 `model.onnx`, 326 MB, SHA-256 pinned | best quality and 2.2× faster than q8 on Apple Silicon. One fixed choice. |
 | Voices | 28 English voice files embedded (14 MB) | voice enum, `voix voices` and offline use never depend on a download |
-| Audio | write WAV to a temp file, spawn `/usr/bin/afplay` as a scoped child process | present on every Mac, needs a seekable file, SIGTERM stops it cleanly |
+| Audio | write WAV to a temp file and spawn a scoped child: `/usr/bin/afplay` on macOS; try installed `pw-play`, `paplay`, then `aplay` on Linux | Resolve players at playback time. Spawn failures and nonzero exits advance to the next backend; no installed player produces `PlayerNotFound`, all failed backends produce `PlaybackFailed`. Interruption kills the child, removes the WAV, and never retries. A failed partial playback may be replayed by the next backend. |
 | Pipelining | synthesize sentence by sentence; first sentence plays as soon as it is ready; each later playback chunk is every sentence that finished while the previous chunk played | first audio in about one second instead of after full synthesis; adaptive batching hides afplay's ~0.9 s per-spawn overhead |
 | Process lifecycle | no daemon; MCP server lives for the agent session; exit kills current playback | warm model load is 250 ms, nothing needs to outlive the session |
 | Model storage | `$VOIX_HOME` or `~/.cache/voix`, `models/kokoro-v1.0/model.onnx`, downloaded from the Hugging Face ONNX repo, verified by SHA-256 after download, checked by size afterwards | one env var, no config file |
@@ -192,7 +192,16 @@ It is selected by swapping the layer passed to the Speaker; the Speaker, CLI and
 
 ## 6. Distribution
 
-User downloads one file: `voix-darwin-arm64` (≈118 MB: Bun runtime 60 MB, ONNX runtime 44 MB, voices 14 MB, code <1 MB). On first speech it downloads `model.onnx` (326 MB) into `~/.cache/voix`.
+User downloads one file: `voix-darwin-arm64` or `voix-linux-x64`. Each embeds Bun, the matching native ONNX addon and shared library, the voices, and the application code. On first speech it downloads `model.onnx` (326 MB) into `~/.cache/voix`.
+
+| Platform | Build target | Playback |
+| --- | --- | --- |
+| macOS Apple Silicon | `bun-darwin-arm64` | `/usr/bin/afplay` |
+| Linux x64, glibc | `bun-linux-x64` | `pw-play`, then `paplay`, then `aplay` on PATH |
+
+`bun run build` defaults to the current supported host; pass a target explicitly to cross-compile. Unsupported targets fail before building. The installer maps `Darwin arm64` and `Linux x86_64` to the matching asset and requires `getconf GNU_LIBC_VERSION` to identify glibc on Linux; it rejects musl before downloading. Linux users need a working audio session and its player package for playback; `say --out` also works headlessly with no player.
+
+Implementation note for [issue #3](https://github.com/osmelmora/voix-mcp/issues/3): Linux intentionally uses Bun's user/content-specific extraction plus FFI preloading instead of copying a fixed `libonnxruntime.so.1` into shared `/tmp`. `status` labels the virtual asset as embedded; its physical filename is managed by Bun. The conditional asset imports must remain statically distinguishable so cross-compilation embeds only the selected platform's library.
 
 ```bash
 curl -fsSL https://github.com/osmelmora/voix-mcp/releases/latest/download/install.sh | sh
@@ -205,7 +214,7 @@ MCP configuration:
 { "mcpServers": { "voix": { "command": "voix", "args": ["mcp"] } } }
 ```
 
-Unsigned binary. `curl` downloads carry no quarantine flag; browser downloads need `xattr -d com.apple.quarantine voix`. A GitHub Actions workflow builds and uploads the binary and installer on tag push. No remote is created by this work. Homebrew tap and npm are later.
+The macOS binary is unsigned. `curl` downloads carry no quarantine flag; browser downloads need `xattr -d com.apple.quarantine voix`. On tag push, GitHub Actions builds and smoke-tests both platforms on native runners, then publishes both assets and the installer in one release job after both builds succeed. Homebrew tap and npm are later.
 
 ## 7. Repository structure
 
@@ -217,6 +226,7 @@ voix-mcp/
 ├── skills/voix/SKILL.md            # agent skill, also served as skill://voix/SKILL.md
 ├── scripts/build.ts                # bun build --compile wrapper
 ├── scripts/install.sh              # curl | sh installer
+├── scripts/smoke.ts                # compiled status, model setup, and WAV checks outside the checkout
 ├── src/
 │   ├── main.ts                     # effect/cli: say | setup | voices | status | mcp
 │   ├── mcp.ts                      # effect/ai McpServer: speak, stop, skill resource
@@ -224,22 +234,27 @@ voix-mcp/
 │   │   ├── errors.ts               # Schema.TaggedError classes, VoixError union
 │   │   ├── paths.ts                # VOIX_HOME resolution
 │   │   ├── text.ts                 # markdown → speakable text, sentence split
-│   │   └── speaker.ts              # Speaker service: queue, pipelining, stop, awaitIdle
+│   │   └── speaker.ts              # Speaker: queue, pipelining, stop, awaitIdle
 │   ├── audio/
 │   │   ├── wav.ts                  # float PCM → 16-bit WAV
-│   │   └── player.ts               # Player service: afplay layer, null layer, env selection
+│   │   └── player.ts               # Player service: macOS/Linux command players, null layer, env selection
 │   └── providers/
 │       ├── provider.ts             # Provider service + types
 │       └── kokoro/
 │           ├── index.ts            # KokoroProvider layer
 │           ├── model.ts            # download, checksum, paths
-│           ├── runtime.ts          # dylib materialization + dynamic ORT import
+│           ├── runtime.ts          # platform library preparation + dynamic ORT import
 │           ├── normalize.ts        # Kokoro text normalization
 │           ├── phonemize.ts        # eSpeak phonemization + Kokoro post-processing + tokenizer
 │           ├── voices.ts           # 28 embedded voices + metadata
 │           └── assets/             # tokenizer.json, voices/*.bin
 ├── tests/
-└── .github/workflows/release.yml
+│   ├── install.test.ts, player.test.ts
+│   ├── helpers/shell.ts            # isolated shell commands shared by process tests
+│   └── fixtures/                   # real child-process entry points for playback tests
+└── .github/workflows/
+    ├── ci.yml                      # both platforms: checks, compiled smoke, and tests
+    └── release.yml                 # both platform builds, followed by one publish job
 ```
 
 ## 8. Implementation plan
@@ -256,14 +271,16 @@ voix-mcp/
 ## 9. Testing strategy
 
 - Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player; Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
+- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify selection, failure fallback, late installation, cancellation, and WAV cleanup.
 - Integration: Kokoro synthesis and the MCP stdio round trip run only when the model is present in the cache (skipped with a message otherwise); playback is disabled with `VOIX_PLAYER=none` so CI is silent.
 - Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client, with stdin kept open until the response arrives (Effect's stdio layer drops in-flight responses on EOF).
+- Compiled distribution: `bun run scripts/smoke.ts <binary>` runs a copy from outside the checkout, checks `status`, prepares the model with a separate ten-minute deadline, and verifies headless synthesis produces a nonempty mono 24 kHz PCM WAV within three minutes. Both platforms run with a fresh `TMPDIR` and with temp environment variables unset to exercise the `/tmp` fallback. Both PR CI jobs and release builds cache model files by platform and model-source hash; only a cold cache needs the Hugging Face download. PR CI runs lint, format, types, the smoke test, and the suite against the compiled MCP server on both platforms; release builds run the same checks and smoke test followed by compiled MCP tests.
 - Manual: the owner hears `voix say` once; no automated test asserts audible output.
 
 ## 10. Open items carried forward
 
 - Intel Mac: onnxruntime-node 1.30 ships no darwin-x64 binary.
-- Linux/Windows: cross-compile builds; audio player and dylib path untested.
+- Linux arm64, Windows, and musl: unsupported build targets; Linux x64 is covered by native CI.
 - `effect/ai`, `effect/cli`, `effect/process` are marked unstable; pinned to 4.0.0.
 - Effect issue #8710 (stdio drops in-flight responses on stdin close) affects one-shot pipelines only.
 - Bun minifier incident with Effect (effect-smol #2126): build without `--minify` unless the compiled smoke test passes with it.

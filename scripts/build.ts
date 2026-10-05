@@ -1,15 +1,19 @@
-// Build a standalone executable. Usage: bun run scripts/build.ts [bun-darwin-arm64] [--minify]
+// Usage: bun run scripts/build.ts [bun-darwin-arm64|bun-linux-x64] [--minify]
+const SUPPORTED_TARGETS = ["bun-darwin-arm64", "bun-linux-x64"];
+
 const target =
-  process.argv.find((a) => a.startsWith("bun-")) ?? "bun-darwin-arm64";
+  process.argv.find((a) => a.startsWith("bun-")) ??
+  `bun-${process.platform}-${process.arch}`;
 
 const minify = process.argv.includes("--minify");
 
 const outfile = `dist/voix-${target.replace(/^bun-/u, "")}`;
 
-if (target !== "bun-darwin-arm64") {
-  console.warn(
-    `warning: ${target} builds but is untested; the embedded ONNX runtime library is darwin-arm64 only.`
+if (!SUPPORTED_TARGETS.includes(target)) {
+  console.error(
+    `unsupported target: ${target}; choose ${SUPPORTED_TARGETS.join(" or ")}`
   );
+  process.exit(1);
 }
 
 const args = [

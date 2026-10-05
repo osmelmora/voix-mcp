@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install voix: downloads the darwin-arm64 executable from the latest GitHub release into ~/.local/bin.
+# Install voix: downloads the platform executable from the latest GitHub release into ~/.local/bin.
 # Usage: curl -fsSL https://github.com/osmelmora/voix-mcp/releases/latest/download/install.sh | sh
 set -eu
 
@@ -11,7 +11,13 @@ os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)
 case "$os-$arch" in
   darwin-arm64) asset="voix-darwin-arm64" ;;
-  *) echo "voix: no prebuilt binary for $os-$arch (MVP supports macOS Apple Silicon only)" >&2; exit 1 ;;
+  linux-x86_64)
+    case "$(getconf GNU_LIBC_VERSION 2>/dev/null || true)" in
+      "glibc "*) asset="voix-linux-x64" ;;
+      *) echo "voix: Linux x64 requires glibc; musl hosts such as Alpine are unsupported" >&2; exit 1 ;;
+    esac
+    ;;
+  *) echo "voix: no prebuilt binary for $os-$arch (supports macOS Apple Silicon and Linux x64 with glibc)" >&2; exit 1 ;;
 esac
 
 if [ "$VERSION" = "latest" ]; then
