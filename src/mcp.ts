@@ -12,7 +12,7 @@ import { VERSION } from "./version.ts";
 
 export const SKILL_URI = "skill://voix/SKILL.md";
 
-export const INSTRUCTIONS = `voix speaks text out loud on the user's machine with a local TTS model. Use \`speak\` when the user asks to hear something, wants a spoken update or summary, or a short audible notification is better than text. Write plain spoken prose: no markdown, lists, code, URLs or paths; short sentences; numbers and abbreviations written the way they are said. Call \`speak\` once with the whole message; it returns as soon as the first sentence starts playing. Use \`stop\` to interrupt, then \`speak\` again to replace. If \`speak\` reports ModelDownloading, the model is being fetched on first use: tell the user and retry shortly. Full guidance: resource ${SKILL_URI}.`;
+export const INSTRUCTIONS = `voix speaks text out loud on the user's machine with a local TTS model. Use \`speak\` when the user asks to hear something, wants a spoken update or summary, or a short audible notification is better than text. Write plain spoken prose: no markdown, lists, code, URLs or paths; short sentences; numbers and abbreviations written the way they are said. Call \`speak\` once with the whole message; it returns when the player has started for the first audio batch. Use \`stop\` to interrupt, then \`speak\` again to replace. If \`speak\` reports ModelDownloading, the model is being fetched on first use: tell the user and retry shortly. Full guidance: resource ${SKILL_URI}.`;
 
 const SpeakParams = Schema.Struct({
   speed: Schema.optional(
@@ -42,7 +42,7 @@ const StopResult = Schema.Struct({ stopped: Schema.Boolean });
 const Speak = Tool.make("speak", {
   dependencies: [McpSchema.McpRequestContext],
   description:
-    'Speak text aloud through the local speakers. Returns when this utterance starts playing (or immediately with status "queued" if another one is playing); it does not wait for playback to finish. Utterances play in order.',
+    'Speak text aloud through the local speakers. Returns when the player has started for the first audio batch (or immediately with status "queued" if another utterance is active); it does not wait for playback to finish. Utterances play in order.',
   failure: VoixErrorSchema,
   failureMode: "return",
   parameters: SpeakParams,

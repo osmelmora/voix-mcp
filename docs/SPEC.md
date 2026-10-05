@@ -54,7 +54,7 @@ Server: `name: "voix"`, protocol `2025-06-18`, stdio transport, stdout is the wi
 
 ### `speak`
 
-Speak text aloud on the local machine. Returns as soon as this utterance starts playing, or immediately with `status: "queued"` if another utterance is already playing. Does not wait for playback to finish.
+Speak text aloud on the local machine. Returns when the player has started for the first audio batch, or immediately with `status: "queued"` if another utterance is active. Does not wait for playback to finish. Missing players and backends that cannot start, including a failed Linux startup check (§5), are returned as tool errors; failures after the player has started are logged asynchronously.
 
 Input:
 
@@ -75,9 +75,9 @@ Output (structured content, also serialized as text):
 }
 ```
 
-`status` is `"speaking"` (playback of this utterance started), `"queued"` (another utterance was playing; this one will follow), or `"cancelled"` (a `stop` arrived before it started). `sentences` is the chunk count after splitting, known before synthesis.
+`status` is `"speaking"` (the player started for this utterance), `"queued"` (another utterance is active; this one will follow), or `"cancelled"` (a `stop` arrived before it started). `sentences` is the chunk count after splitting, known before synthesis.
 
-Errors are returned as tool results with `isError: true` and a JSON body `{ "_tag": "<Code>", ...fields, "message": "..." }`. Codes: `EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`, `ModelDownloading` (model not ready after a 45 s bounded wait; includes `received`/`total` bytes), `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`, `SynthFailed`. Invalid JSON shapes are rejected by the protocol layer as `-32602`.
+Errors before startup acknowledgement are returned as tool results with `isError: true` and a JSON body `{ "_tag": "<Code>", ...fields, "message": "..." }`. Codes: `EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`, `ModelDownloading` (model not ready after a 45 s bounded wait; includes `received`/`total` bytes), `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`, `SynthFailed`. Failures after the player starts, including nonzero exits after every fallback attempt and playback of queued utterances, are logged on stderr; an already returned response cannot report them. Invalid JSON shapes are rejected by the protocol layer as `-32602`.
 
 Progress: while `speak` waits for a model download it sends `notifications/progress` every two seconds if the client supplied a `progressToken`.
 
@@ -182,7 +182,7 @@ It is selected by swapping the layer passed to the Speaker; the Speaker, CLI and
 | ONNX runtime library | only the target platform's library is embedded; macOS copies the dylib beside Bun's extracted addon; Linux preloads the embedded `.so` through `bun:ffi` before importing `onnxruntime-node` | macOS resolves `@loader_path`; Linux resolves the preloaded library by SONAME. Bun materializes the Linux library under a user/content-specific temp filename instead of a shared `/tmp/libonnxruntime.so.1`. |
 | Model precision | fp32 `model.onnx`, 326 MB, SHA-256 pinned | best quality and 2.2× faster than q8 on Apple Silicon. One fixed choice. |
 | Voices | 28 English voice files embedded (14 MB) | voice enum, `voix voices` and offline use never depend on a download |
-| Audio | write WAV to a temp file and spawn a scoped child: `/usr/bin/afplay` on macOS; try installed `pw-play`, `paplay`, then `aplay` on Linux | Resolve players at playback time. Spawn failures and nonzero exits advance to the next backend; no installed player produces `PlayerNotFound`, all failed backends produce `PlaybackFailed`. Interruption kills the child, removes the WAV, and never retries. A failed partial playback may be replayed by the next backend. |
+| Audio | write WAV to a temp file and spawn a scoped child: `/usr/bin/afplay` on macOS; try installed `pw-play`, `paplay`, then `aplay` on Linux | A per-platform startup check proves a backend reaches an output device before an utterance's first batch is acknowledged: a successful spawn on macOS, one silent sample that must exit successfully within five seconds on Linux. Later batches of the utterance skip it. The backend that last played successfully is tried first, so a failing backend is not retried on every utterance. Players are resolved again for every batch, so a long-running server sees newly installed ones. No installed player produces `PlayerNotFound`; all failed backends produce `PlaybackFailed`. Interruption kills the child, removes the WAV, and never retries. A failed partial playback may be replayed by the next backend. |
 | Pipelining | synthesize sentence by sentence; first sentence plays as soon as it is ready; each later playback chunk is every sentence that finished while the previous chunk played | first audio in about one second instead of after full synthesis; adaptive batching hides afplay's ~0.9 s per-spawn overhead |
 | Process lifecycle | no daemon; MCP server lives for the agent session; exit kills current playback | warm model load is 250 ms, nothing needs to outlive the session |
 | Model storage | `$VOIX_HOME` or `~/.cache/voix`, `models/kokoro-v1.0/model.onnx`, downloaded from the Hugging Face ONNX repo, verified by SHA-256 after download, checked by size afterwards | one env var, no config file |
@@ -250,7 +250,7 @@ voix-mcp/
 │           └── assets/             # tokenizer.json, voices/*.bin
 ├── tests/
 │   ├── install.test.ts, player.test.ts
-│   ├── helpers/shell.ts            # isolated shell commands shared by process tests
+│   ├── helpers/                    # shell fixtures, process entry point, bounded readiness waits
 │   └── fixtures/                   # real child-process entry points for playback tests
 └── .github/workflows/
     ├── ci.yml                      # both platforms: checks, compiled smoke, and tests
@@ -263,7 +263,7 @@ voix-mcp/
 | --- | --- | --- |
 | 1 | Kokoro provider: runtime, model download, phonemize, synthesize | `bun test tests/kokoro.test.ts` passes; phonemes match the recorded kokoro-js output; with the model cached, a sentence synthesizes to 24 kHz PCM of plausible length |
 | 2 | Audio: WAV encoder, afplay player, null player | a generated tone plays and `kill` stops it |
-| 3 | Core: text normalization, Speaker queue with pipelining and stop | fake-provider tests: serial order, speak returns when first chunk plays, queued status, stop clears queue and interrupts |
+| 3 | Core: text normalization, Speaker queue with pipelining and stop | fake-provider tests: serial order, speak returns when the player starts, queued status, stop clears queue and interrupts |
 | 4 | CLI | `voix say "Hello"` speaks; `voix setup`, `voices`, `status` work; `--out` writes a WAV |
 | 5 | MCP server | an MCP client over stdio lists `speak` and `stop`, calls `speak`, gets `status: "speaking"`; `stop` returns; errors come back typed |
 | 6 | Build + distribution | `bun run build` produces `dist/voix-darwin-arm64`; the binary runs from another directory with node_modules absent; README documents install and MCP config; release workflow and installer present |
@@ -271,7 +271,7 @@ voix-mcp/
 ## 9. Testing strategy
 
 - Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player; Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
-- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify selection, failure fallback, late installation, cancellation, and WAV cleanup.
+- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio, while failures after real-audio startup are logged asynchronously.
 - Integration: Kokoro synthesis and the MCP stdio round trip run only when the model is present in the cache (skipped with a message otherwise); playback is disabled with `VOIX_PLAYER=none` so CI is silent.
 - Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client, with stdin kept open until the response arrives (Effect's stdio layer drops in-flight responses on EOF).
 - Compiled distribution: `bun run scripts/smoke.ts <binary>` runs a copy from outside the checkout, checks `status`, prepares the model with a separate ten-minute deadline, and verifies headless synthesis produces a nonempty mono 24 kHz PCM WAV within three minutes. Both platforms run with a fresh `TMPDIR` and with temp environment variables unset to exercise the `/tmp` fallback. Both PR CI jobs and release builds cache model files by platform and model-source hash; only a cold cache needs the Hugging Face download. PR CI runs lint, format, types, the smoke test, and the suite against the compiled MCP server on both platforms; release builds run the same checks and smoke test followed by compiled MCP tests.

@@ -33,7 +33,7 @@ export const SPEED_MAX = 2;
 
 export const DEFAULT_SPEED = 1;
 
-/** How long `speak` waits for the first audio before giving up with ModelDownloading. */
+/** How long `speak` waits for playback to start before giving up with ModelDownloading. */
 export const FIRST_AUDIO_TIMEOUT = "45 seconds";
 
 export interface SpeakRequest {
@@ -56,7 +56,7 @@ export interface StopResult {
 }
 
 export interface SpeakerService {
-  /** Resolves when this utterance starts playing, or at once with "queued" if something else is playing. */
+  /** Resolves when the player starts, or at once with "queued" if another utterance is active. */
   readonly speak: (
     request: SpeakRequest
   ) => Effect.Effect<SpeakResult, VoixError>;
@@ -153,18 +153,17 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
               }
             }
 
-            // Start playback synchronously (up to its first async boundary) before reporting "speaking",
-            // so a caller that returns from speak() can rely on audio being underway.
-            const playing = yield* Effect.forkChild(
-              player.play(
-                concatPcm(batch.map((c) => c.pcm)),
-                first.chunk.sampleRate
-              ),
-              { startImmediately: true }
-            );
+            // Only the first batch asks for an acknowledgement. Failures before it reach the waiting
+            // caller; later ones are reported asynchronously so `speak` never waits for the batch to finish.
+            const acknowledged = yield* Deferred.isDone(job.started);
 
-            yield* Deferred.succeed(job.started, "speaking");
-            yield* Fiber.join(playing);
+            yield* player.play(
+              concatPcm(batch.map((c) => c.pcm)),
+              first.chunk.sampleRate,
+              acknowledged
+                ? undefined
+                : Deferred.succeed(job.started, "speaking").pipe(Effect.asVoid)
+            );
 
             if (pendingError !== undefined) {
               return yield* pendingError;

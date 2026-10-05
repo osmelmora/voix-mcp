@@ -78,7 +78,7 @@ The agent gets two tools:
 
 | tool | what it does |
 | --- | --- |
-| `speak` `{ text, voice?, speed? }` | Speak text. Returns as soon as the first sentence starts playing (or `queued` if something else is playing). |
+| `speak` `{ text, voice?, speed? }` | Speak text. Returns when the player has started for the first audio batch (or `queued` if another utterance is active). |
 | `stop` | Stop immediately and drop the queue. |
 
 Errors come back as typed tool errors (`EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`, `ModelDownloading`, `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`, `SynthFailed`). The server also publishes short usage instructions and the resource `skill://voix/SKILL.md`, which is the same text as [skills/voix/SKILL.md](skills/voix/SKILL.md). Copy that folder into your agent's skills directory if it supports skills.
@@ -114,7 +114,7 @@ There is no config file. Defaults: voice `af_heart`, speed `1.0`.
 - **Runtime:** TypeScript on Bun, compiled with `bun build --compile`. Effect 4 for services, typed errors, the queue, interruption, and the MCP and CLI layers.
 - **Inference:** `onnxruntime-node` on the CPU with about 150 lines of Kokoro glue and the eSpeak NG phonemizer in WebAssembly. No Python, no transformers.js.
 - **Pipelining:** text is split into sentences; the first plays while the rest synthesize, and each later playback chunk is everything that finished in the meantime.
-- **Playback:** a temp WAV played by `/usr/bin/afplay` on macOS, or `pw-play` / `paplay` / `aplay` on Linux, as a scoped child process killed on `stop`, on request cancellation, and on exit. Linux tries the next installed backend after a spawn failure or nonzero exit; cancellation never retries. If a player fails after partially playing, fallback may replay that batch.
+- **Playback:** a temp WAV played by `/usr/bin/afplay` on macOS, or `pw-play` / `paplay` / `aplay` on Linux, as a scoped child process killed on `stop`, on request cancellation, and on exit. Linux plays one silent sample to check the sound server/device before reporting startup, trying the next installed backend on failure. Each check has a five-second deadline. Every utterance is checked before its first batch is acknowledged; later batches are not. The backend that last played successfully is tried first. Cancellation never retries. If a player fails after partially playing, fallback may replay that batch.
 - **What is inside the binary:** Bun runtime, the ONNX Runtime library, 28 voice files, the tokenizer, the code. Only the model is downloaded.
 
 ## Development

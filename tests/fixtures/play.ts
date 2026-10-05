@@ -13,7 +13,19 @@ Effect.gen(function* playFixture() {
     yield* Effect.promise(() => Bun.stdin.text());
   }
 
-  yield* player.play(new Float32Array([0, 0.5, -0.5]), 24_000);
+  const pcm = new Float32Array([0, 0.5, -0.5]);
+
+  // Like the speaker, the first batch of an utterance waits for an acknowledgement.
+  yield* player.play(pcm, 24_000, Effect.void);
+
+  if (process.argv.includes("--repeat")) {
+    // A later batch of the same, already acknowledged utterance.
+    yield* player.play(pcm, 24_000);
+  }
+
+  if (process.argv.includes("--next-utterance")) {
+    yield* player.play(pcm, 24_000, Effect.void);
+  }
 }).pipe(
   Effect.provide(layer),
   Effect.provide(BunServices.layer),
