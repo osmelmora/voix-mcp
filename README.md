@@ -119,9 +119,9 @@ There is no config file. Defaults: voice `af_heart`, speed `1.0`.
 
 ## Development
 
-Use [mise](https://mise.jdx.dev) to install and activate the Bun, Node.js, hk, Pkl, and cocogitto versions pinned in `mise.toml`. Node runs the lint and format tooling. mise also puts `node_modules/.bin` on `PATH`. The release workflow uses the same mise configuration.
+Use [mise](https://mise.jdx.dev) to install and activate the Bun, Node.js, hk, Pkl, and cocogitto versions pinned in `mise.toml`. Node runs the lint and format tooling. mise also puts `node_modules/.bin` on `PATH`. CI uses the same mise configuration.
 
-Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The CI workflow checks commit messages, linting, formatting, types, and tests on every push to `main` and every pull request; the release workflow repeats those checks before building.
+Linting and formatting use [Ultracite](https://www.ultracite.ai/docs/provider/oxlint) with Oxlint and Oxfmt. Run `bun run check` to check both, or `bun run fix` to apply automatic fixes. The CI workflow checks commit messages, linting, formatting, types, and tests on every push to `main` and every pull request.
 
 [Dillon Mulroy's anti-slop rules](https://github.com/dmmulroy/anti-slop) run alongside Ultracite: all 18 generic rules, all five Effect rules, and `oxc/no-accumulating-spread` are errors. See [the vendoring record](tools/oxlint/anti-slop/UPSTREAM.md) for provenance, licenses, and update guidance. Keep `oxlint` and `@oxlint/plugins` pinned to the same version when upgrading.
 
@@ -129,7 +129,9 @@ Cyclomatic complexity is capped at 15 per function, overriding Ultracite's defau
 
 Git hooks run through [hk](https://hk.jdx.dev), configured in `hk.pkl`. The pre-commit hook runs Oxlint, Oxfmt, and `tsc` on staged files and stages automatic fixes. The commit-msg hook requires [Conventional Commits](https://www.conventionalcommits.org) subjects such as `feat(mcp): add stop tool`. The pre-push hook runs the same checks and the tests. Run `hk check --all` to check everything at once, or `hk fix --all` to apply fixes. Set `HK=0` to skip the hooks once.
 
-Releases use [cocogitto](https://docs.cocogitto.io), configured in `cog.toml`. `cog bump --auto` picks the next version from the commits since the last tag, sets it in `package.json`, prepends the release to `CHANGELOG.md`, then commits and tags it. Pushing the tag runs the release workflow, which uses that version's changelog entry as the GitHub release notes. Run `cog changelog` to preview unreleased changes.
+Releases run in CI with [cocogitto](https://docs.cocogitto.io), configured in `cog.toml`. When the commits since the last tag call for a bump (`feat` → minor; `fix` or `perf` → patch; a breaking change → minor while the version is 0.x, so 1.0.0 is a manual release), a push to `main` builds and tests both binaries with the next version. Once both pass, CI commits that version to `package.json` and `CHANGELOG.md` as `github-actions[bot]`, tags it, and publishes a GitHub release with the binaries, the installer, and that version's changelog entry as notes. Other pushes are plain CI runs. CI is the only thing that tags: don't run `cog bump` or push tags yourself, and pull after a release to get the bump commit. If the release job fails, re-run it; when its tag was already pushed, it publishes without bumping again.
+
+To release by hand, run the `ci` workflow on `main` from the Actions tab. It takes a bump (`auto`, `patch`, `minor`, or `major`), an exact `X.Y.Z` version that overrides the bump, and a dry run that builds and tests the release without publishing it. `ci`, `chore`, `style`, and `test` commits stay out of the changelog. Keep GitHub's default merge title ("Merge pull request #N from …") when merging a pull request: cog 7.0.0 lists a merge commit with a conventional title in the changelog next to the commit it merges, so the change appears twice. Run `cog changelog` to preview unreleased changes.
 
 ```bash
 mise install
