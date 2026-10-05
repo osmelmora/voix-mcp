@@ -183,6 +183,7 @@ It is selected by swapping the layer passed to the Speaker; the Speaker, CLI and
 | Model precision | fp32 `model.onnx`, 326 MB, SHA-256 pinned | best quality and 2.2× faster than q8 on Apple Silicon. One fixed choice. |
 | Voices | 28 English voice files embedded (14 MB) | voice enum, `voix voices` and offline use never depend on a download |
 | Audio | write WAV to a temp file and spawn a scoped child: `/usr/bin/afplay` on macOS; try installed `pw-play`, `paplay`, then `aplay` on Linux | A per-platform startup check proves a backend reaches an output device before an utterance's first batch is acknowledged: a successful spawn on macOS, one silent sample that must exit successfully within five seconds on Linux. Later batches of the utterance skip it. The backend that last played successfully is tried first, so a failing backend is not retried on every utterance. Players are resolved again for every batch, so a long-running server sees newly installed ones. No installed player produces `PlayerNotFound`; all failed backends produce `PlaybackFailed`. Interruption kills the child, removes the WAV, and never retries. A failed partial playback may be replayed by the next backend. |
+| Telemetry | force `ORT_DISABLE_TELEMETRY=1` before any native ONNX runtime initialization | Set it through libc's `setenv` as well as `process.env`: Bun's JS environment writes do not reach native `getenv`. The opt-out prevents the uploader and persistent device identifier from being created, including during FFI preloading. |
 | Pipelining | synthesize sentence by sentence; first sentence plays as soon as it is ready; each later playback chunk is every sentence that finished while the previous chunk played | first audio in about one second instead of after full synthesis; adaptive batching hides afplay's ~0.9 s per-spawn overhead |
 | Process lifecycle | no daemon; MCP server lives for the agent session; exit kills current playback | warm model load is 250 ms, nothing needs to outlive the session |
 | Model storage | `$VOIX_HOME` or `~/.cache/voix`, `models/kokoro-v1.0/model.onnx`, downloaded from the Hugging Face ONNX repo, verified by SHA-256 after download, checked by size afterwards | one env var, no config file |
@@ -249,9 +250,9 @@ voix-mcp/
 │           ├── voices.ts           # 28 embedded voices + metadata
 │           └── assets/             # tokenizer.json, voices/*.bin
 ├── tests/
-│   ├── install.test.ts, player.test.ts
+│   ├── install.test.ts, player.test.ts, runtime.test.ts
 │   ├── helpers/                    # shell fixtures, process entry point, bounded readiness waits
-│   └── fixtures/                   # real child-process entry points for playback tests
+│   └── fixtures/                   # real child-process entry points for playback and runtime tests
 └── .github/workflows/
     ├── ci.yml                      # both platforms: checks, compiled smoke, and tests
     └── release.yml                 # both platform builds, followed by one publish job
@@ -271,7 +272,7 @@ voix-mcp/
 ## 9. Testing strategy
 
 - Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player; Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
-- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio, while failures after real-audio startup are logged asynchronously.
+- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio, while failures after real-audio startup are logged asynchronously. `runtime.test.ts` verifies through native `getenv` that the real loader overrides a telemetry opt-in; its child also uses CI suppression to avoid emitting telemetry if the test regresses.
 - Integration: Kokoro synthesis and the MCP stdio round trip run only when the model is present in the cache (skipped with a message otherwise); playback is disabled with `VOIX_PLAYER=none` so CI is silent.
 - Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client, with stdin kept open until the response arrives (Effect's stdio layer drops in-flight responses on EOF).
 - Compiled distribution: `bun run scripts/smoke.ts <binary>` runs a copy from outside the checkout, checks `status`, prepares the model with a separate ten-minute deadline, and verifies headless synthesis produces a nonempty mono 24 kHz PCM WAV within three minutes. Both platforms run with a fresh `TMPDIR` and with temp environment variables unset to exercise the `/tmp` fallback. Both PR CI jobs and release builds cache model files by platform and model-source hash; only a cold cache needs the Hugging Face download. PR CI runs lint, format, types, the smoke test, and the suite against the compiled MCP server on both platforms; release builds run the same checks and smoke test followed by compiled MCP tests.
