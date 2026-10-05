@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer } from "effect";
+import { Context, Effect, FileSystem, Layer, Match, Result } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { PlaybackFailed } from "../core/errors/playback-failed.ts";
@@ -7,7 +7,7 @@ import { encodeWav } from "./wav.ts";
 
 export interface PlayerService {
   readonly name: string;
-  /** Play to completion. Interrupting the effect stops playback immediately. */
+  /** Play to completion. Interruption stops playback. */
   readonly play: (
     pcm: Float32Array,
     sampleRate: number
@@ -18,56 +18,130 @@ export class Player extends Context.Service<Player, PlayerService>()(
   "voix/Player"
 ) {}
 
-const AFPLAY = "/usr/bin/afplay";
+interface PlayerCommand {
+  readonly name: string;
+  readonly command: string;
+}
 
-/** macOS: write a WAV to a temp file and play it with afplay as a scoped child process. */
-export const AfplayPlayer: Layer.Layer<
+const findCommands = (commands: readonly PlayerCommand[]) =>
+  Effect.sync(() => {
+    const available: PlayerCommand[] = [];
+
+    for (const candidate of commands) {
+      const executable = Bun.which(candidate.command);
+
+      if (executable !== null) {
+        available.push({ command: executable, name: candidate.name });
+      }
+    }
+
+    return available;
+  });
+
+/** Play a WAV through each installed backend until one succeeds. Interruptions never retry. */
+const commandPlayer = (
+  commands: readonly PlayerCommand[],
+  platform: NodeJS.Platform
+): Layer.Layer<
   Player,
   never,
   FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
-> = Layer.effect(
-  Player,
-  Effect.gen(function* AfplayPlayer() {
-    const fs = yield* FileSystem.FileSystem;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+> =>
+  Layer.effect(
+    Player,
+    Effect.gen(function* makePlayer() {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const installed = yield* findCommands(commands);
 
-    const play = (pcm: Float32Array, sampleRate: number) =>
-      Effect.gen(function* playPcm() {
-        if (!(yield* fs.exists(AFPLAY))) {
-          return yield* new PlayerNotFound({ platform: process.platform });
-        }
-
-        const file = yield* fs.makeTempFileScoped({
-          prefix: "voix-",
-          suffix: ".wav",
-        });
-
-        yield* fs.writeFile(file, encodeWav(pcm, sampleRate));
-
-        const handle = yield* ChildProcess.make(AFPLAY, [file], {
-          stderr: "pipe",
-          stdin: "ignore",
-          stdout: "ignore",
-        });
-
-        const code = yield* handle.exitCode;
-
-        if (code !== 0) {
-          return yield* new PlaybackFailed({
-            reason: `afplay exited with code ${code}`,
+      const playFile = (command: PlayerCommand, file: string) =>
+        Effect.gen(function* playFileBody() {
+          const handle = yield* ChildProcess.make(command.command, [file], {
+            stderr: "ignore",
+            stdin: "ignore",
+            stdout: "ignore",
           });
-        }
-      }).pipe(
-        Effect.scoped,
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.catchTag(
-          "PlatformError",
-          (e) => new PlaybackFailed({ reason: e.message })
-        )
-      );
 
-    return { name: "afplay", play };
-  })
+          const code = yield* handle.exitCode;
+
+          if (code !== 0) {
+            return yield* new PlaybackFailed({
+              reason: `${command.name} exited with code ${code}`,
+            });
+          }
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            spawner
+          ),
+          Effect.catchTag(
+            "PlatformError",
+            (failure) =>
+              new PlaybackFailed({
+                reason: `${command.name}: ${failure.message}`,
+              })
+          )
+        );
+
+      const play = (pcm: Float32Array, sampleRate: number) =>
+        Effect.gen(function* playPcm() {
+          // Resolve again for every playback so a long-running MCP server sees newly installed players.
+          const available = yield* findCommands(commands);
+
+          if (available.length === 0) {
+            return yield* new PlayerNotFound({ platform });
+          }
+
+          const file = yield* fs.makeTempFileScoped({
+            prefix: "voix-",
+            suffix: ".wav",
+          });
+
+          yield* fs.writeFile(file, encodeWav(pcm, sampleRate));
+          const failures: string[] = [];
+
+          for (const command of available) {
+            const result = yield* Effect.result(playFile(command, file));
+
+            if (Result.isSuccess(result)) {
+              return;
+            }
+
+            failures.push(result.failure.reason);
+          }
+
+          return yield* new PlaybackFailed({ reason: failures.join("; ") });
+        }).pipe(
+          Effect.scoped,
+          Effect.catchTag(
+            "PlatformError",
+            (failure) => new PlaybackFailed({ reason: failure.message })
+          )
+        );
+
+      return {
+        name:
+          installed.length === 0
+            ? "unavailable"
+            : installed.map((command) => command.name).join(" → "),
+        play,
+      };
+    })
+  );
+
+export const AfplayPlayer = commandPlayer(
+  [{ command: "/usr/bin/afplay", name: "afplay" }],
+  "darwin"
+);
+
+export const LinuxPlayer = commandPlayer(
+  [
+    { command: "pw-play", name: "pw-play" },
+    { command: "paplay", name: "paplay" },
+    { command: "aplay", name: "aplay" },
+  ],
+  "linux"
 );
 
 /** Discards audio. Used for tests and CI (VOIX_PLAYER=none). */
@@ -81,14 +155,11 @@ const selectPlayer = () => {
     return NullPlayer;
   }
 
-  if (process.platform === "darwin") {
-    return AfplayPlayer;
-  }
-
-  return Layer.succeed(Player, {
-    name: "unsupported",
-    play: () => new PlayerNotFound({ platform: process.platform }),
-  });
+  return Match.value(process.platform).pipe(
+    Match.when("darwin", () => AfplayPlayer),
+    Match.when("linux", () => LinuxPlayer),
+    Match.orElse((platform) => commandPlayer([], platform))
+  );
 };
 
 /** Pick the player for this process: VOIX_PLAYER=none disables output; otherwise the platform default. */

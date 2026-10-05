@@ -10,13 +10,28 @@ permissions:
 
 jobs:
   check:
-    runs-on: macos-14
+    name: check (${{ matrix.target }})
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            target: darwin-arm64
+          - runner: ubuntu-latest
+            target: linux-x64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # cog check reads the commits since the last tag
       - uses: jdx/mise-action@v4
       - run: bun install --frozen-lockfile
+      - run: echo "VOIX_HOME=$RUNNER_TEMP/voix" >> "$GITHUB_ENV"
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.VOIX_HOME }}/models
+          key: kokoro-${{ runner.os }}-${{ hashFiles('src/providers/kokoro/model.ts') }}
       - run: cog check
       - run: hk check --all
-      - run: VOIX_PLAYER=none bun test
+      - run: bun run build bun-${{ matrix.target }}
+      - run: bun run scripts/smoke.ts ./dist/voix-${{ matrix.target }}
+      - run: VOIX_PLAYER=none VOIX_BIN=./dist/voix-${{ matrix.target }} bun test

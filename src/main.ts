@@ -17,7 +17,10 @@ import { splitSentences, toSpeakable } from "./core/text.ts";
 import { McpLive } from "./mcp.ts";
 import { KokoroProvider } from "./providers/kokoro/index.ts";
 import { KOKORO_MODEL } from "./providers/kokoro/model.ts";
-import { dylibDestination, isEmbedded } from "./providers/kokoro/runtime.ts";
+import {
+  isEmbedded,
+  runtimeLibraryDescription,
+} from "./providers/kokoro/runtime.ts";
 import { DEFAULT_VOICE } from "./providers/kokoro/voices.ts";
 import { Provider } from "./providers/provider.ts";
 import { VERSION } from "./version.ts";
@@ -179,14 +182,14 @@ const status = Command.make("status", {}, () =>
 
     const lines = [
       `voix ${VERSION}`,
-      `platform:   ${process.platform}-${process.arch}`,
-      `runtime:    bun ${Bun.version}${isEmbedded() ? " (compiled executable)" : ""}`,
-      `home:       ${voixHome()}`,
-      `provider:   ${provider.id} (${KOKORO_MODEL.precision}, ${provider.voices.length} voices, default ${provider.defaultVoice})`,
-      `model:      ${s.modelPath}`,
-      `installed:  ${s.installed ? "yes" : "no (run `voix setup`)"}`,
-      `player:     ${player.name}`,
-      `onnx dylib: ${isEmbedded() ? dylibDestination() : "node_modules (dev)"}`,
+      `platform:     ${process.platform}-${process.arch}`,
+      `runtime:      bun ${Bun.version}${isEmbedded() ? " (compiled executable)" : ""}`,
+      `home:         ${voixHome()}`,
+      `provider:     ${provider.id} (${KOKORO_MODEL.precision}, ${provider.voices.length} voices, default ${provider.defaultVoice})`,
+      `model:        ${s.modelPath}`,
+      `installed:    ${s.installed ? "yes" : "no (run `voix setup`)"}`,
+      `player:       ${player.name}`,
+      `onnx library: ${isEmbedded() ? runtimeLibraryDescription() : "node_modules (dev)"}`,
     ];
 
     yield* Console.log(lines.join("\n"));

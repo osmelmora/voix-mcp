@@ -8,7 +8,7 @@ Agent ──MCP──▶ voix ──▶ Kokoro (local ONNX) ──▶ your speak
 
 An agent gathers whatever it needs with its other tools, writes a spoken summary, and calls `speak`. voix synthesizes it with [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) on the CPU and plays it. First audio starts in about a second; nothing leaves the machine.
 
-**MVP scope:** macOS on Apple Silicon. See [docs/SPEC.md](docs/SPEC.md) for every design decision.
+**Supported platforms:** macOS on Apple Silicon and Linux x64 (glibc). See [docs/SPEC.md](docs/SPEC.md) for every design decision.
 
 ## Install
 
@@ -18,23 +18,35 @@ One line (installs to `~/.local/bin/voix`; set `VOIX_INSTALL_DIR` to change that
 curl -fsSL https://github.com/osmelmora/voix-mcp/releases/latest/download/install.sh | sh
 ```
 
-Or download the executable from the [latest release](https://github.com/osmelmora/voix-mcp/releases/latest) ([direct link](https://github.com/osmelmora/voix-mcp/releases/latest/download/voix-darwin-arm64)) and put it on your `PATH`:
+The installer selects the matching release asset:
+
+| Platform | Asset | Audio player |
+| --- | --- | --- |
+| macOS Apple Silicon | `voix-darwin-arm64` | built-in `afplay` |
+| Linux x64 (glibc) | `voix-linux-x64` | tries `pw-play`, `paplay`, then `aplay` on `PATH`, advancing on failure |
+
+Linux playback needs a working PipeWire, PulseAudio, or ALSA session. Install its client tools if necessary (for example, `pipewire-bin`, `pulseaudio-utils`, or `alsa-utils` on Ubuntu). Headless use with `voix say --out hello.wav "Hello"` needs no audio player or device. Alpine/musl, Linux arm64, Intel Macs, and Windows do not have supported binaries yet.
+
+Or download the executable from the [latest release](https://github.com/osmelmora/voix-mcp/releases/latest) and put it on your `PATH`. For macOS Apple Silicon:
 
 ```bash
 curl -fsSL -o voix https://github.com/osmelmora/voix-mcp/releases/latest/download/voix-darwin-arm64
 chmod +x voix && mv voix ~/.local/bin/voix
 ```
 
+For Linux x64, use `voix-linux-x64` in the download URL instead.
+
 Or build it yourself (needs [Bun](https://bun.sh) 1.4.2 (pinned in mise.toml)):
 
 ```bash
 git clone https://github.com/osmelmora/voix-mcp && cd voix-mcp
 bun install
-bun run build            # → dist/voix-darwin-arm64 (≈120 MB)
-cp dist/voix-darwin-arm64 ~/.local/bin/voix
+bun run build            # → dist/voix-<platform>-<arch> for the current supported host
+# Cross-compile explicitly: bun run build bun-linux-x64
+# Copy the matching executable from dist/ to ~/.local/bin/voix
 ```
 
-The binary is not code-signed. `curl` downloads run as-is; if you downloaded it with a browser run `xattr -d com.apple.quarantine ~/.local/bin/voix` once.
+The macOS binary is not code-signed. `curl` downloads run as-is; if you downloaded it with a browser run `xattr -d com.apple.quarantine ~/.local/bin/voix` once.
 
 ## First run
 
@@ -102,7 +114,7 @@ There is no config file. Defaults: voice `af_heart`, speed `1.0`.
 - **Runtime:** TypeScript on Bun, compiled with `bun build --compile`. Effect 4 for services, typed errors, the queue, interruption, and the MCP and CLI layers.
 - **Inference:** `onnxruntime-node` on the CPU with about 150 lines of Kokoro glue and the eSpeak NG phonemizer in WebAssembly. No Python, no transformers.js.
 - **Pipelining:** text is split into sentences; the first plays while the rest synthesize, and each later playback chunk is everything that finished in the meantime.
-- **Playback:** a temp WAV played by `/usr/bin/afplay` as a scoped child process, killed on `stop`, on request cancellation, and on exit.
+- **Playback:** a temp WAV played by `/usr/bin/afplay` on macOS, or `pw-play` / `paplay` / `aplay` on Linux, as a scoped child process killed on `stop`, on request cancellation, and on exit. Linux tries the next installed backend after a spawn failure or nonzero exit; cancellation never retries. If a player fails after partially playing, fallback may replay that batch.
 - **What is inside the binary:** Bun runtime, the ONNX Runtime library, 28 voice files, the tokenizer, the code. Only the model is downloaded.
 
 ## Development
@@ -126,12 +138,14 @@ hk install --mise                  # install the git hooks
 hk check --all                     # lint, format, and type check
 VOIX_PLAYER=none bun test          # synthesis and MCP tests run only if the model is cached
 bun run src/main.ts say "dev mode"
-bun run build && VOIX_BIN=./dist/voix-darwin-arm64 VOIX_PLAYER=none bun test tests/mcp.test.ts
+bun run build
+bun run scripts/smoke.ts ./dist/voix-darwin-arm64 # use voix-linux-x64 on Linux
+VOIX_BIN=./dist/voix-darwin-arm64 VOIX_PLAYER=none bun test tests/mcp.test.ts
 ```
 
 ## Known limitations
 
-- darwin-arm64 only. Linux and Windows cross-compile but are untested; Intel Macs lack a prebuilt ONNX Runtime in this version.
+- Supported binaries are darwin-arm64 and linux-x64 (glibc). Linux arm64, Windows, Intel Macs, and musl are not supported yet.
 - English voices only. Kokoro's other languages need a different grapheme-to-phoneme stack.
 - The embedded eSpeak NG build is GPL-3; see [NOTICE](NOTICE).
 
