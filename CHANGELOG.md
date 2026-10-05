@@ -2,6 +2,23 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.2.0 - 2026-10-05
+#### Features
+- (**linux**) support x64 builds and playback - (621a60c) - Osmel Mora, *Claude Opus 5.5*
+#### Bug Fixes
+- (**cli**) exit nonzero when speech fails - (11439b6) - Osmel Mora, *Claude Opus 5.5*
+- (**mcp**) report player startup failures from speak - (654010c) - Osmel Mora, *Claude Opus 5.5*
+- (**runtime**) disable native ONNX telemetry before initialization - (d9eee02) - Osmel Mora, *Claude Opus 5.5*
+#### Documentation
+- (**lint**) consolidate anti-slop documentation and verify lint - (eb59f0f) - Osmel Mora
+- list the download options in the install section - (daabfcc) - Osmel Mora
+#### Continuous Integration
+- bump actions to Node 24 runtimes - (2a3dfc8) - Osmel Mora, *Claude Opus 5.5 (1M context)*
+#### Miscellaneous Chores
+- (**lint**) add anti-slop rules and cap complexity at 15 - (3b910cc) - Osmel Mora
+
+- - -
+
 ## v0.1.0 - 2026-10-04
 #### Features
 - local voice output for agents (MCP + CLI) - (95761a8) - Osmel Mora, *Claude Fable 5.1*
