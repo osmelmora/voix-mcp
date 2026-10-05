@@ -25,11 +25,12 @@ Write the way a person talks, not the way a document reads.
 
 ## Calling the tools
 
-`speak` returns as soon as the first sentence starts playing; it does not wait for the end. Its result tells you how many sentences were queued and whether this utterance started or is queued behind another.
+`speak` returns when the player has started for the first audio batch; it does not wait for the end. Its result tells you how many sentences were queued and whether the player started or this utterance is queued behind another.
 
 - Call `speak` once with the whole message rather than once per sentence.
 - To replace what is being said, call `stop` and then `speak`.
 - If `speak` returns `ModelDownloading`, the speech model is still being fetched on first use. Tell the user it is downloading and try again in a minute.
+- If `speak` returns `PlayerNotFound` or `PlaybackFailed`, tell the user speech could not start and provide the message in text. Failures after playback starts are logged by the server.
 - Default voice is `af_heart`. Only change `voice` or `speed` when the user asks.
 
 ## Example

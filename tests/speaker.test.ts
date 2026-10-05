@@ -37,6 +37,7 @@ const FakeProvider = (synthMs: number) =>
 interface Played {
   readonly samples: number;
   readonly at: number;
+  completed: boolean;
 }
 
 /** Recording player: each play takes `playMs` and records the batch size. */
@@ -46,10 +47,18 @@ const makeRecorder = (playMs: number) => {
 
   const layer = Layer.succeed(Player, {
     name: "recorder",
-    play: (pcm) =>
+    play: (pcm, _sampleRate, onStarted = Effect.void) =>
       Effect.gen(function* recordPlay() {
-        played.push({ at: Date.now() - start, samples: pcm.length });
+        const playback = {
+          at: Date.now() - start,
+          completed: false,
+          samples: pcm.length,
+        };
+
+        played.push(playback);
+        yield* onStarted;
         yield* Effect.sleep(`${playMs} millis`);
+        playback.completed = true;
       }),
   });
 
@@ -77,15 +86,16 @@ const run = <A, E>(
 };
 
 describe("Speaker", () => {
-  test("returns once the first sentence plays and batches the rest", async () => {
+  test("returns once the first sentence starts and batches the rest", async () => {
     await run(20, 60, (speaker, played) =>
       Effect.gen(function* batching() {
         const result = yield* speaker.speak({ text: "One. Two. Three. Four." });
         expect(result.status).toBe("speaking");
         expect(result.sentences).toBe(4);
         expect(result.queued_behind).toBe(0);
-        // first sentence is playing, the rest are still synthesizing
-        expect(played.length).toBe(1);
+        expect(played[0]?.samples).toBe("One.".length);
+        expect(played[0]?.completed).toBe(false);
+        expect(played).toHaveLength(1);
         yield* speaker.awaitIdle;
         const total = played.reduce((n, p) => n + p.samples, 0);
         expect(total).toBe(
@@ -117,10 +127,11 @@ describe("Speaker", () => {
   test("stop interrupts playback and drops the queue", async () => {
     await run(5, 500, (speaker, played) =>
       Effect.gen(function* stopping() {
-        const started = Date.now();
         yield* speaker.speak({ text: "First. Second. Third." });
+        const started = Date.now();
         const queued = yield* speaker.speak({ text: "Later." });
         expect(queued.status).toBe("queued");
+
         const stopped = yield* speaker.stop;
         expect(stopped.stopped).toBe(true);
         yield* speaker.awaitIdle;

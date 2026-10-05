@@ -3,14 +3,18 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-/** Create an isolated set of shell commands; callers outside a test hook can clean it up explicitly. */
-export const createShellFixture = (prefix: string) => {
+/** An isolated directory of shell commands, removed by the test hook that created it. */
+const createShellFixture = (prefix: string) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), prefix));
 
-  const command = (name: string, body: string, executable = true) => {
+  const command = (
+    name: string,
+    body: string,
+    options: { readonly executable?: boolean } = {}
+  ) => {
     const file = path.join(directory, name);
     writeFileSync(file, `#!/bin/sh\n${body}\n`);
-    chmodSync(file, executable ? 0o755 : 0o644);
+    chmodSync(file, options.executable === false ? 0o644 : 0o755);
   };
 
   return {
@@ -20,9 +24,11 @@ export const createShellFixture = (prefix: string) => {
   };
 };
 
+export type ShellFixture = ReturnType<typeof createShellFixture>;
+
 /** Register one cleanup hook per test file and create fixtures owned by that hook. */
 export const useShellFixtures = (prefix: string) => {
-  const fixtures: ReturnType<typeof createShellFixture>[] = [];
+  const fixtures: ShellFixture[] = [];
 
   afterEach(() => {
     for (const fixture of fixtures.splice(0)) {

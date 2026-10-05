@@ -6,6 +6,12 @@ import type { PipedSubprocess } from "bun";
 import type { Schema } from "effect";
 
 import { isModelInstalled } from "../src/providers/kokoro/model.ts";
+import { failsAfterStartupCheck } from "./helpers/player.ts";
+import { cliCommand, waitUntil } from "./helpers/process.ts";
+import { useShellFixtures } from "./helpers/shell.ts";
+import type { ShellFixture } from "./helpers/shell.ts";
+
+const createFixture = useShellFixtures("voix-mcp-player-test-");
 
 interface JsonRpcRequest {
   readonly id?: number;
@@ -26,9 +32,9 @@ class StdioClient {
   readonly notifications: any[] = [];
   readonly stderr: string[] = [];
 
-  start(command: string[]) {
+  start(command: string[], env: NodeJS.ProcessEnv = {}) {
     const proc = Bun.spawn(command, {
-      env: { ...process.env, VOIX_PLAYER: "none" },
+      env: { ...process.env, VOIX_PLAYER: "none", ...env },
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -41,6 +47,20 @@ class StdioClient {
         this.stderr.push(new TextDecoder().decode(chunk));
       }
     })();
+  }
+
+  async initialize(env: NodeJS.ProcessEnv = {}) {
+    this.start([...cliCommand(), "mcp"], env);
+
+    const response = await this.request("initialize", {
+      capabilities: {},
+      clientInfo: { name: "voix-test", version: "0" },
+      protocolVersion: "2025-06-18",
+    });
+
+    this.notify("notifications/initialized");
+
+    return response;
   }
 
   private async pump(stream: ReadableStream<Uint8Array>) {
@@ -115,6 +135,29 @@ class StdioClient {
   }
 }
 
+/** Run a fresh MCP server whose PATH holds only the fake players `install` creates. */
+const withFakePlayers = async (
+  install: (shell: ShellFixture) => void,
+  body: (client: StdioClient) => Promise<void>
+) => {
+  const shell = createFixture();
+  install(shell);
+  const client = new StdioClient();
+
+  try {
+    await client.initialize({ PATH: shell.directory, VOIX_PLAYER: "" });
+    await body(client);
+  } finally {
+    await client.stop();
+  }
+};
+
+const speakHello = (client: StdioClient) =>
+  client.request("tools/call", {
+    arguments: { text: "Hello." },
+    name: "speak",
+  });
+
 const describeMcp = isModelInstalled() ? describe : describe.skip;
 
 if (!isModelInstalled()) {
@@ -124,22 +167,11 @@ if (!isModelInstalled()) {
 describeMcp("voix mcp (stdio)", () => {
   const client = new StdioClient();
 
-  const command = process.env.VOIX_BIN
-    ? [process.env.VOIX_BIN, "mcp"]
-    : ["bun", "run", "src/main.ts", "mcp"];
-
   beforeAll(async () => {
-    client.start(command);
-
-    const init = await client.request("initialize", {
-      capabilities: {},
-      clientInfo: { name: "voix-test", version: "0" },
-      protocolVersion: "2025-06-18",
-    });
+    const init = await client.initialize();
 
     expect(init.result.serverInfo.name).toBe("voix");
     expect(init.result.instructions).toContain("speak");
-    client.notify("notifications/initialized");
   });
 
   afterAll(() => client.stop());
@@ -202,3 +234,58 @@ describeMcp("voix mcp (stdio)", () => {
     expect(res.error?.code).toBe(-32_602);
   });
 });
+
+describe.skipIf(process.platform !== "linux" || !isModelInstalled())(
+  "MCP playback failures",
+  () => {
+    test("returns a typed tool error when no audio player is installed", async () => {
+      await withFakePlayers(
+        () => {},
+        async (client) => {
+          const response = await speakHello(client);
+
+          expect(response.result.isError).toBe(true);
+          const error = JSON.parse(response.result.content[0].text);
+          expect(error._tag).toBe("PlayerNotFound");
+          expect(error.platform).toBe("linux");
+        }
+      );
+    }, 90_000);
+
+    test("returns when the player starts and logs a later playback failure", async () => {
+      await withFakePlayers(
+        (shell) => shell.command("aplay", failsAfterStartupCheck(7)),
+        async (client) => {
+          const response = await speakHello(client);
+
+          expect(response.result.isError).toBeFalsy();
+          expect(response.result.structuredContent.status).toBe("speaking");
+          await waitUntil(() =>
+            client.stderr.join("").includes("aplay exited with code 7")
+          );
+
+          expect(client.stderr.join("")).toContain("aplay exited with code 7");
+        }
+      );
+    }, 90_000);
+
+    test("returns PlaybackFailed when every installed player rejects playback", async () => {
+      await withFakePlayers(
+        (shell) => {
+          shell.command("pw-play", "exit 7");
+          shell.command("paplay", "exit 8");
+          shell.command("aplay", "exit 9");
+        },
+        async (client) => {
+          const response = await speakHello(client);
+
+          expect(response.result.isError).toBe(true);
+          const error = JSON.parse(response.result.content[0].text);
+          expect(error._tag).toBe("PlaybackFailed");
+          expect(error.reason).toContain("pw-play exited with code 7");
+          expect(error.reason).toContain("aplay exited with code 9");
+        }
+      );
+    }, 90_000);
+  }
+);
