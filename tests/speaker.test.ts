@@ -1,15 +1,19 @@
 import { describe, expect, test } from "bun:test";
 
-import { Effect, Layer, Option, Stream } from "effect";
+import { Effect, Fiber, Layer, Option, Stream } from "effect";
 
 import { Player } from "../src/audio/player.ts";
+import { SynthFailed } from "../src/core/errors/synth-failed.ts";
 import { Speaker, SpeakerLive } from "../src/core/speaker.ts";
 import { Provider } from "../src/providers/provider.ts";
 import type { AudioChunk } from "../src/providers/provider.ts";
 
 const RATE = 100;
 
-/** Fake provider: each sentence takes `synthMs` and yields one chunk whose length encodes the sentence index. */
+/**
+ * Fake provider: each sentence takes `synthMs` and yields one chunk whose length encodes the sentence.
+ * A sentence starting with "Fail" fails synthesis instead.
+ */
 const FakeProvider = (synthMs: number) =>
   Layer.succeed(Provider, {
     defaultVoice: "v1",
@@ -24,11 +28,15 @@ const FakeProvider = (synthMs: number) =>
     synthesize: ({ text }) =>
       Stream.fromEffect(
         Effect.sleep(`${synthMs} millis`).pipe(
-          Effect.as<AudioChunk>({
-            pcm: new Float32Array(text.length),
-            sampleRate: RATE,
-            text,
-          })
+          Effect.andThen(
+            text.startsWith("Fail")
+              ? Effect.fail(new SynthFailed({ reason: "synthesis failed" }))
+              : Effect.succeed<AudioChunk>({
+                  pcm: new Float32Array(text.length),
+                  sampleRate: RATE,
+                  text,
+                })
+          )
         )
       ),
     voices: [{ gender: "female", id: "v1", language: "en-US", name: "One" }],
@@ -171,6 +179,74 @@ describe("Speaker", () => {
 
         expect(speed._tag).toBe("InvalidSpeed");
       })
+    );
+  });
+
+  test("speakAndWait waits for the complete utterance", async () => {
+    await run(5, 40, (speaker, played) =>
+      Effect.gen(function* completion() {
+        yield* speaker.speakAndWait({ text: "One. Two." });
+        expect(played.map((chunk) => chunk.samples)).toEqual([
+          "One.".length,
+          "Two.".length,
+        ]);
+        // Playback has finished, so stop must not find an in-progress utterance once the worker is idle.
+        yield* speaker.awaitIdle;
+        const stopped = yield* speaker.stop;
+        expect(stopped.stopped).toBe(false);
+      })
+    );
+  });
+
+  test("speakAndWait fails when synthesis fails before any audio", async () => {
+    await run(5, 40, (speaker, played) =>
+      Effect.gen(function* failBeforeAudio() {
+        const error = yield* Effect.flip(
+          speaker.speakAndWait({ text: "Fail." })
+        );
+
+        expect(error._tag).toBe("SynthFailed");
+        expect(played).toHaveLength(0);
+      })
+    );
+  });
+
+  test("speakAndWait fails when synthesis fails after playback starts", async () => {
+    await run(5, 40, (speaker, played) =>
+      Effect.gen(function* failAfterAudio() {
+        const error = yield* Effect.flip(
+          speaker.speakAndWait({ text: "One. Fail." })
+        );
+
+        expect(error._tag).toBe("SynthFailed");
+        expect(played.map((chunk) => chunk.samples)).toEqual(["One.".length]);
+      })
+    );
+  });
+
+  test("stop settles completion waiters for active and queued speech", async () => {
+    await run(5, 500, (speaker, played) =>
+      Effect.gen(function* cancelWaiters() {
+        const active = yield* Effect.forkChild(
+          speaker.speakAndWait({ text: "First." }),
+          { startImmediately: true }
+        );
+
+        while (played.length === 0) {
+          yield* Effect.sleep("5 millis");
+        }
+
+        const queued = yield* Effect.forkChild(
+          speaker.speakAndWait({ text: "Queued." }),
+          { startImmediately: true }
+        );
+
+        yield* speaker.stop;
+        yield* Fiber.join(active);
+        yield* Fiber.join(queued);
+        yield* speaker.awaitIdle;
+        expect(played).toHaveLength(1);
+      }).pipe(Effect.timeout("2 seconds"))
     );
   });
 });
