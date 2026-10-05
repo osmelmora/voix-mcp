@@ -4,13 +4,69 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (auto follows the commits since the last tag)
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+      version:
+        description: Exact version X.Y.Z instead of the bump (optional)
+        type: string
+      dry_run:
+        description: Build and test the release, then stop before publishing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+defaults:
+  run:
+    # bash -eo pipefail. The implicit shell is bash -e, where a failed command
+    # inside a pipeline does not fail the step.
+    shell: bash
+
+# Runs that can release (pushes to main, dispatches from main) run one at a
+# time, in order, and are never cancelled. `queue: max` keeps up to 100 pending
+# runs instead of GitHub's default of one, where a newer pending run replaces
+# the older one and can drop a release or a requested bump. Dry runs never
+# push, so they wait in their own group. Pull requests and dispatches from
+# other branches get a group per run and run in parallel, as before.
+concurrency:
+  group: ${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && format('ci-run-{0}', github.run_id) || (inputs.dry_run && 'ci-dry-run' || 'ci-release') }}
+  queue: max # actionlint does not know this key yet; see .github/actionlint.yaml
+  cancel-in-progress: false # queue: max does not allow true
+
 jobs:
+  # Next release version from the commits since the last tag; empty when
+  # nothing calls for a bump, which leaves a plain CI run.
+  plan:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+      publish: ${{ steps.next.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # cog reads the commits since the last tag
+      - uses: jdx/mise-action@v4
+      # Fails unless run from main; writes no outputs when there is nothing to release.
+      - id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: bun run scripts/release.ts plan
+
   check:
     name: check (${{ matrix.target }})
+    needs: plan
+    # Pull requests skip plan.
+    if: ${{ !cancelled() && needs.plan.result != 'failure' }}
     strategy:
       matrix:
         include:
@@ -32,6 +88,61 @@ jobs:
           key: kokoro-${{ runner.os }}-${{ hashFiles('src/providers/kokoro/model.ts') }}
       - run: cog check
       - run: hk check --all
+      # The build bakes the version from package.json into the binary. The
+      # release job commits the same version with cog bump.
+      - if: needs.plan.outputs.version != ''
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: bun pm version "$VERSION" --no-git-tag-version --allow-same-version
       - run: bun run build bun-${{ matrix.target }}
       - run: bun run scripts/smoke.ts ./dist/voix-${{ matrix.target }}
       - run: VOIX_PLAYER=none VOIX_BIN=./dist/voix-${{ matrix.target }} bun test
+      - if: needs.plan.outputs.version != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: voix-${{ matrix.target }}
+          path: dist/voix-${{ matrix.target }}
+          if-no-files-found: error
+
+  # Both platforms passed with the planned version: commit the bump on the
+  # tested commit, tag it, and publish the binaries built above. Pushes made
+  # with GITHUB_TOKEN start no workflow runs.
+  release:
+    needs: [plan, check]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the bump commit and tag, publish the release
+      actions: read # when main moved, find the ci run for the newer commit
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # cog needs tags and history for the bump and the release notes
+      - uses: jdx/mise-action@v4
+      # Bumps, tags, and pushes the tested commit (or finds the bump an earlier
+      # attempt pushed), then writes RELEASE_NOTES.md and sets publish. When
+      # main moved, it skips if a published release or a newer push run covers
+      # this commit, and fails otherwise.
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun run scripts/release.ts release
+      - if: steps.release.outputs.publish == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: voix-*
+          path: dist
+          merge-multiple: true
+      - if: steps.release.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG }}
+          body_path: RELEASE_NOTES.md
+          make_latest: ${{ steps.release.outputs.latest }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/voix-darwin-arm64
+            dist/voix-linux-x64
+            scripts/install.sh

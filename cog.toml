@@ -10,6 +10,16 @@ pre_bump_hooks = [
 ]
 post_bump_hooks = []
 
+# Defaults: feat → minor, fix → patch, breaking → minor while on 0.x.
+[commit_types]
+perf = { bump_patch = true }
+# Kept out of the changelog and the release notes, including the
+# chore(version) bump commit itself.
+ci = { omit_from_changelog = true }
+chore = { omit_from_changelog = true }
+style = { omit_from_changelog = true }
+test = { omit_from_changelog = true }
+
 [changelog]
 path = "CHANGELOG.md"
 template = "default"

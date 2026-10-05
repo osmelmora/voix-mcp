@@ -215,7 +215,7 @@ MCP configuration:
 { "mcpServers": { "voix": { "command": "voix", "args": ["mcp"] } } }
 ```
 
-The macOS binary is unsigned. `curl` downloads carry no quarantine flag; browser downloads need `xattr -d com.apple.quarantine voix`. On tag push, GitHub Actions builds and smoke-tests both platforms on native runners, then publishes both assets and the installer in one release job after both builds succeed. Homebrew tap and npm are later.
+The macOS binary is unsigned. `curl` downloads carry no quarantine flag; browser downloads need `xattr -d com.apple.quarantine voix`. When a push to `main` (or a manual run of the workflow) calls for a release, GitHub Actions builds and smoke-tests both platforms on native runners with the next version; after both succeed, one release job commits and tags the version bump, then publishes both assets and the installer. `scripts/release.ts` plans the version and makes the release job's decisions. Homebrew tap and npm are later.
 
 ## 7. Repository structure
 
@@ -227,6 +227,8 @@ voix-mcp/
 ├── skills/voix/SKILL.md            # agent skill, also served as skill://voix/SKILL.md
 ├── scripts/build.ts                # bun build --compile wrapper
 ├── scripts/install.sh              # curl | sh installer
+├── scripts/release.ts              # CI plan and release steps: git, cog, gh, and step outputs
+├── scripts/release-core.ts         # release decisions, without I/O
 ├── scripts/smoke.ts                # compiled status, model setup, and WAV checks outside the checkout
 ├── src/
 │   ├── main.ts                     # effect/cli: say | setup | voices | status | mcp
@@ -250,12 +252,11 @@ voix-mcp/
 │           ├── voices.ts           # 28 embedded voices + metadata
 │           └── assets/             # tokenizer.json, voices/*.bin
 ├── tests/
-│   ├── install.test.ts, player.test.ts, cli.test.ts, runtime.test.ts
-│   ├── helpers/                    # shell fixtures, process entry point, bounded readiness waits
+│   ├── install.test.ts, player.test.ts, cli.test.ts, runtime.test.ts, release.test.ts
+│   ├── helpers/                    # shell fixtures, process entry point, bounded readiness waits, release repositories
 │   └── fixtures/                   # real child-process entry points for playback and runtime tests
 └── .github/workflows/
-    ├── ci.yml                      # both platforms: checks, compiled smoke, and tests
-    └── release.yml                 # both platform builds, followed by one publish job
+    └── ci.yml                      # both platforms: checks, compiled smoke, and tests; then one release job
 ```
 
 ## 8. Implementation plan
@@ -273,9 +274,10 @@ voix-mcp/
 
 - Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player, including per-utterance completion and cancellation; Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
 - Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `cli.test.ts` checks Linux CLI failure exit codes with a cached model; `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio, while failures after real-audio startup are logged asynchronously. `runtime.test.ts` verifies through native `getenv` that the real loader overrides a telemetry opt-in; its child also uses CI suppression to avoid emitting telemetry if the test regresses.
+- Release tests: `release.test.ts` table-tests the decisions in `scripts/release-core.ts`: planning inputs and cog output, release state, rejected pushes, tag checks, the latest release, and when `main` moved, published releases, successor runs, and retries with an injected sleep. It also runs `scripts/release.ts` against throwaway repositories with a local bare origin, real git and cog, and a fake `gh`: planning, a full release, a re-run that resumes from another directory, a push raced by `main`, a rejected push, a lost push response, and failed or missing commands.
 - Integration: Kokoro synthesis and the MCP stdio round trip run only when the model is present in the cache (skipped with a message otherwise); playback is disabled with `VOIX_PLAYER=none` so CI is silent.
 - Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client, with stdin kept open until the response arrives (Effect's stdio layer drops in-flight responses on EOF).
-- Compiled distribution: `bun run scripts/smoke.ts <binary>` runs a copy from outside the checkout, checks `status`, prepares the model with a separate ten-minute deadline, and verifies headless synthesis produces a nonempty mono 24 kHz PCM WAV within three minutes. Both platforms run with a fresh `TMPDIR` and with temp environment variables unset to exercise the `/tmp` fallback. Both PR CI jobs and release builds cache model files by platform and model-source hash; only a cold cache needs the Hugging Face download. PR CI runs lint, format, types, the smoke test, and the suite against the compiled MCP server on both platforms; release builds run the same checks and smoke test followed by compiled MCP tests.
+- Compiled distribution: `bun run scripts/smoke.ts <binary>` runs a copy from outside the checkout, checks `status`, prepares the model with a separate ten-minute deadline, and verifies headless synthesis produces a nonempty mono 24 kHz PCM WAV within three minutes. Both platforms run with a fresh `TMPDIR` and with temp environment variables unset to exercise the `/tmp` fallback. CI caches model files by platform and model-source hash; only a cold cache needs the Hugging Face download. CI runs lint, format, types, the smoke test, and the suite against the compiled MCP server on both platforms for pull requests and pushes alike; a release publishes the binaries that run built and tested.
 - Manual: the owner hears `voix say` once; no automated test asserts audible output.
 
 ## 10. Open items carried forward

@@ -1,0 +1,7 @@
+# actionlint 1.7.12 does not know GitHub's `concurrency.queue` key yet:
+# https://github.com/rhysd/actionlint/issues/657 (fix in PR #654).
+# Drop this file once a release supports it.
+paths:
+  .github/workflows/ci.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
