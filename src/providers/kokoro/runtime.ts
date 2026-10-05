@@ -71,17 +71,56 @@ const runtimePlatform =
   process.platform === "linux"
     ? {
         describe: () => `${libraryAsset} (embedded; extracted by Bun on load)`,
+        libc: "libc.so.6",
         prepare: preloadLibrary,
       }
     : {
         describe: dylibDestination,
+        libc: "/usr/lib/libSystem.B.dylib",
         prepare: materializeDylib,
       };
 
 export const runtimeLibraryDescription = runtimePlatform.describe;
 
+const disableTelemetry: Effect.Effect<void, SynthFailed> = Effect.gen(
+  function* disableTelemetry() {
+    // Bun's process.env writes do not reach libc's getenv, which native ORT reads.
+    // Set the native environment before loading ORT; an API opt-out after import is too late.
+    const { dlopen } = yield* Effect.promise(() => import("bun:ffi"));
+
+    const result = yield* Effect.acquireUseRelease(
+      Effect.try({
+        catch: loadFailed,
+        try: () =>
+          dlopen(runtimePlatform.libc, {
+            setenv: { args: ["cstring", "cstring", "int"], returns: "int" },
+          }),
+      }),
+      (libc) =>
+        Effect.sync(() =>
+          libc.symbols.setenv(
+            Buffer.from("ORT_DISABLE_TELEMETRY\0"),
+            Buffer.from("1\0"),
+            1
+          )
+        ),
+      (libc) => Effect.sync(() => libc.close())
+    );
+
+    if (result !== 0) {
+      return yield* new SynthFailed({
+        reason: "could not load ONNX runtime: could not disable ONNX telemetry",
+      });
+    }
+
+    process.env.ORT_DISABLE_TELEMETRY = "1";
+  }
+);
+
 const importOrt: Effect.Effect<Ort, SynthFailed> = Effect.gen(
   function* importOrt() {
+    yield* disableTelemetry;
+
     if (isEmbedded()) {
       yield* runtimePlatform.prepare;
     }
