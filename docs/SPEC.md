@@ -235,7 +235,7 @@ voix-mcp/
 │   │   ├── errors.ts               # Schema.TaggedError classes, VoixError union
 │   │   ├── paths.ts                # VOIX_HOME resolution
 │   │   ├── text.ts                 # markdown → speakable text, sentence split
-│   │   └── speaker.ts              # Speaker: queue, pipelining, stop, awaitIdle
+│   │   └── speaker.ts              # Speaker: queue, pipelining, speakAndWait, stop, awaitIdle
 │   ├── audio/
 │   │   ├── wav.ts                  # float PCM → 16-bit WAV
 │   │   └── player.ts               # Player service: macOS/Linux command players, null layer, env selection
@@ -250,7 +250,7 @@ voix-mcp/
 │           ├── voices.ts           # 28 embedded voices + metadata
 │           └── assets/             # tokenizer.json, voices/*.bin
 ├── tests/
-│   ├── install.test.ts, player.test.ts, runtime.test.ts
+│   ├── install.test.ts, player.test.ts, cli.test.ts, runtime.test.ts
 │   ├── helpers/                    # shell fixtures, process entry point, bounded readiness waits
 │   └── fixtures/                   # real child-process entry points for playback and runtime tests
 └── .github/workflows/
@@ -271,8 +271,8 @@ voix-mcp/
 
 ## 9. Testing strategy
 
-- Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player; Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
-- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio, while failures after real-audio startup are logged asynchronously. `runtime.test.ts` verifies through native `getenv` that the real loader overrides a telemetry opt-in; its child also uses CI suppression to avoid emitting telemetry if the test regresses.
+- Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player, including per-utterance completion and cancellation; Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
+- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `cli.test.ts` checks Linux CLI failure exit codes with a cached model; `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio, while failures after real-audio startup are logged asynchronously. `runtime.test.ts` verifies through native `getenv` that the real loader overrides a telemetry opt-in; its child also uses CI suppression to avoid emitting telemetry if the test regresses.
 - Integration: Kokoro synthesis and the MCP stdio round trip run only when the model is present in the cache (skipped with a message otherwise); playback is disabled with `VOIX_PLAYER=none` so CI is silent.
 - Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client, with stdin kept open until the response arrives (Effect's stdio layer drops in-flight responses on EOF).
 - Compiled distribution: `bun run scripts/smoke.ts <binary>` runs a copy from outside the checkout, checks `status`, prepares the model with a separate ten-minute deadline, and verifies headless synthesis produces a nonempty mono 24 kHz PCM WAV within three minutes. Both platforms run with a fresh `TMPDIR` and with temp environment variables unset to exercise the `/tmp` fallback. Both PR CI jobs and release builds cache model files by platform and model-source hash; only a cold cache needs the Hugging Face download. PR CI runs lint, format, types, the smoke test, and the suite against the compiled MCP server on both platforms; release builds run the same checks and smoke test followed by compiled MCP tests.

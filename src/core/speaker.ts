@@ -60,6 +60,10 @@ export interface SpeakerService {
   readonly speak: (
     request: SpeakRequest
   ) => Effect.Effect<SpeakResult, VoixError>;
+  /** Wait for this utterance to finish and propagate its errors to a synchronous CLI caller. */
+  readonly speakAndWait: (
+    request: SpeakRequest
+  ) => Effect.Effect<void, VoixError>;
   /** Stop current playback and drop everything queued. */
   readonly stop: Effect.Effect<StopResult>;
   /** Resolves when nothing is playing or queued. */
@@ -77,6 +81,8 @@ interface Job {
   readonly speed: number;
   readonly started: Deferred.Deferred<SpeakStatus, VoixError>;
   readonly cancelled: Ref.Ref<boolean>;
+  readonly completed: Deferred.Deferred<void, VoixError>;
+  readonly reportErrors: boolean;
 }
 
 type Message =
@@ -171,13 +177,25 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
           }
         }).pipe(
           Effect.onExit((exit) =>
-            Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
-              ? Deferred.failCause(job.started, exit.cause)
-              : Deferred.succeed(job.started, "cancelled")
+            Effect.gen(function* settleJob() {
+              const completion =
+                Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
+                  ? Exit.void
+                  : exit;
+
+              yield* Deferred.done(job.completed, completion);
+              yield* Exit.isFailure(completion)
+                ? Deferred.failCause(job.started, completion.cause)
+                : Deferred.succeed(job.started, "cancelled");
+            })
           ),
           // Effect callbacks return Effects, not Promises.
           // oxlint-disable-next-line promise/prefer-await-to-callbacks
-          Effect.tapError((error) => Console.error(`voix: ${error.message}`))
+          Effect.tapError((error) =>
+            job.reportErrors
+              ? Console.error(`voix: ${error.message}`)
+              : Effect.void
+          )
         );
 
       const worker = Effect.forever(
@@ -207,10 +225,11 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
           }
         });
 
-      const speak = (
-        request: SpeakRequest
-      ): Effect.Effect<SpeakResult, VoixError> =>
-        Effect.gen(function* speakBody() {
+      const enqueue = (
+        request: SpeakRequest,
+        options: { readonly reportErrors: boolean }
+      ) =>
+        Effect.gen(function* enqueueJob() {
           const voice = request.voice ?? provider.defaultVoice;
           const speed = request.speed ?? DEFAULT_SPEED;
 
@@ -251,7 +270,11 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
 
           const job: Job = {
             cancelled: yield* Ref.make(false),
+            // Deferred.make accepts void for a completion signal with no payload.
+            // oxlint-disable-next-line typescript/no-invalid-void-type
+            completed: yield* Deferred.make<void, VoixError>(),
             id,
+            reportErrors: options.reportErrors,
             sentences,
             speed,
             started: yield* Deferred.make<SpeakStatus, VoixError>(),
@@ -261,35 +284,67 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
           const queuedBehind = yield* Ref.getAndUpdate(active, (n) => n + 1);
           yield* Queue.offer(jobs, job);
 
+          return { job, queuedBehind };
+        });
+
+      // Give up when the player has not started in time: the model is still downloading, or synthesis stalled.
+      const awaitStart = (job: Job) =>
+        Deferred.await(job.started).pipe(
+          Effect.timeoutOrElse({
+            duration: FIRST_AUDIO_TIMEOUT,
+            orElse: () =>
+              Effect.gen(function* orElse() {
+                yield* cancelJob(job);
+                const s = yield* provider.status;
+
+                return yield* Option.isSome(s.downloading)
+                  ? new ModelDownloading(s.downloading.value)
+                  : new SynthFailed({
+                      reason: `no audio after ${FIRST_AUDIO_TIMEOUT}`,
+                    });
+              }),
+          })
+        );
+
+      const speak = (
+        request: SpeakRequest
+      ): Effect.Effect<SpeakResult, VoixError> =>
+        Effect.gen(function* speakBody() {
+          const { job, queuedBehind } = yield* enqueue(request, {
+            reportErrors: true,
+          });
+
           const base = {
             queued_behind: queuedBehind,
-            sentences: sentences.length,
-            voice,
+            sentences: job.sentences.length,
+            voice: job.voice,
           };
 
           if (queuedBehind > 0) {
             return { status: "queued" as const, ...base };
           }
 
-          const status = yield* Deferred.await(job.started).pipe(
-            Effect.timeoutOrElse({
-              duration: FIRST_AUDIO_TIMEOUT,
-              orElse: () =>
-                Effect.gen(function* orElse() {
-                  yield* cancelJob(job);
-                  const s = yield* provider.status;
-
-                  return yield* Option.isSome(s.downloading)
-                    ? new ModelDownloading(s.downloading.value)
-                    : new SynthFailed({
-                        reason: `no audio after ${FIRST_AUDIO_TIMEOUT}`,
-                      });
-                }),
-            }),
+          const status = yield* awaitStart(job).pipe(
             Effect.onInterrupt(() => cancelJob(job))
           );
 
           return { status, ...base };
+        });
+
+      const speakAndWait = (request: SpeakRequest) =>
+        Effect.gen(function* speakAndWaitBody() {
+          const { job, queuedBehind } = yield* enqueue(request, {
+            reportErrors: false,
+          });
+
+          yield* Effect.gen(function* awaitCompletion() {
+            // Like `speak`, the deadline only applies to an utterance that starts right away.
+            if (queuedBehind === 0) {
+              yield* awaitStart(job);
+            }
+
+            yield* Deferred.await(job.completed);
+          }).pipe(Effect.onInterrupt(() => cancelJob(job)));
         });
 
       const stop: Effect.Effect<StopResult> = Effect.gen(function* stop() {
@@ -298,6 +353,7 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
         for (const job of dropped) {
           yield* Ref.set(job.cancelled, true);
           yield* Deferred.succeed(job.started, "cancelled");
+          yield* Deferred.done(job.completed, Exit.void);
           yield* Ref.update(active, (n) => n - 1);
         }
 
@@ -316,6 +372,6 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
         }
       });
 
-      return { awaitIdle, speak, stop };
+      return { awaitIdle, speak, speakAndWait, stop };
     })
   );
