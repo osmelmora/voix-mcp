@@ -71,7 +71,6 @@ interface ProgressUpdate {
   readonly total?: number;
 }
 
-/** Next notification for one pending call. `progress` strictly increases for that token. */
 const nextProgress = (last: number, status: ProviderStatus): ProgressUpdate => {
   if (Option.isSome(status.downloading)) {
     const { received, total } = status.downloading.value;

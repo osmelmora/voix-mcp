@@ -107,7 +107,6 @@ interface Job {
   readonly started: Deferred.Deferred<Started, VoixError>;
   readonly cancelled: Ref.Ref<boolean>;
   readonly completed: Deferred.Deferred<Ended, VoixError>;
-  /** A waiting caller receives this job's failures, so the job does not log them. */
   readonly wait: boolean;
 }
 
@@ -133,7 +132,6 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
       const active = yield* Ref.make(0);
       let nextId = 1;
 
-      // Decrement before waking waiters, so a caller that reads `active` does not still count this job.
       const settle = (job: Job, outcome: Exit.Exit<Ended, VoixError>) =>
         Effect.gen(function* settleJob() {
           yield* Ref.update(active, (n) => n - 1);
@@ -143,8 +141,6 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
             : Deferred.succeed(job.started, "cancelled");
         });
 
-      // Synthesize sentence by sentence into a queue while playing what is ready: the first sentence
-      // starts as soon as it exists, every later playback chunk is whatever finished meanwhile.
       const runJob = (job: Job): Effect.Effect<Ended, VoixError> =>
         Effect.gen(function* runJobBody() {
           if (yield* Ref.get(job.cancelled)) {
@@ -195,8 +191,6 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
               }
             }
 
-            // Only the first batch asks for an acknowledgement. A caller that did not pass `wait`
-            // returns then; later failures still end the job.
             const acknowledged = yield* Deferred.isDone(job.started);
 
             yield* player.play(
@@ -363,7 +357,6 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
 
         const running = yield* Ref.get(current);
 
-        // `current` can still point at a job `settle` already ended.
         const interrupted =
           Option.isSome(running) &&
           !(yield* Deferred.isDone(running.value.job.completed));
