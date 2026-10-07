@@ -25,7 +25,7 @@ Write the way a person talks, not the way a document reads.
 
 ## Calling the tools
 
-Leave `wait` off so you can keep working while voix talks. Pass `wait: true` only when your next step must not overlap the speech. Examples are a command that plays sound or takes over the terminal, or speech that is the last thing you do before ending. Keep waited speech short, because some clients cap how long a tool call may take. If a waited `speak` returns `PlaybackFailed` or `SynthFailed`, part of the message may have played. Tell the user speech was cut short and give the message in text. `speaking` is true when voix is still playing or has more speech queued at the moment the call returns.
+Leave `wait` off so you can keep working while voix talks. Pass `wait: true` only when your next step must not overlap the speech. Examples are a command that plays sound or takes over the terminal, or speech that is the last thing you do before ending. Keep waited speech short, because some clients cap how long a tool call may take. Later utterances do not extend the wait. If a waited `speak` returns `PlaybackFailed` or `SynthFailed`, part of the message may have played. Tell the user speech was cut short and give the message in text. `speaking` is true when voix is still playing or has more speech queued at the moment the call returns.
 
 - Call `speak` once with the whole message rather than once per sentence.
 - To replace what is being said, call `stop` and then `speak`.

@@ -47,7 +47,7 @@ const StopResult = Schema.Struct({ stopped: Schema.Boolean });
 const Speak = Tool.make("speak", {
   dependencies: [McpSchema.McpRequestContext],
   description:
-    'Speak text aloud through the local speakers. By default returns when the player has started for the first audio batch, or immediately with status "queued" if another utterance is active. With wait: true, returns when this utterance has finished ("finished") or was stopped ("cancelled"), and reports playback failures as errors. Utterances play in order.',
+    'Speak text aloud through the local speakers. By default returns when the player has started for the first audio batch, or immediately with status "queued" if another utterance is active. With wait: true, returns when this utterance has finished ("finished") or was stopped ("cancelled"), and reports playback failures as errors. Later utterances do not extend the wait. Without wait, failures after playback starts are logged and the call still succeeds. Utterances play in order.',
   failure: VoixErrorSchema,
   failureMode: "return",
   parameters: SpeakParams,
