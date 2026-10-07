@@ -54,7 +54,7 @@ Server: `name: "voix"`, protocol `2025-06-18`, stdio transport, stdout is the wi
 
 ### `speak`
 
-Speak text aloud on the local machine. Returns when the player has started for the first audio batch, or immediately with `status: "queued"` if another utterance is active. Does not wait for playback to finish. Missing players and backends that cannot start, including a failed Linux startup check (§5), are returned as tool errors; failures after the player has started are logged asynchronously.
+Speak text aloud on the local machine. By default it returns when the player has started for the first audio batch, or immediately with `status: "queued"` if another utterance is active. With `wait: true` it returns when this utterance has finished playing (`finished`) or a `stop` cut it short (`cancelled`). Missing players and backends that cannot start, including a failed Linux startup check (§5), are returned as tool errors. A failure after the player has started is a tool error when `wait` is true, and is logged on stderr otherwise.
 
 Input:
 
@@ -63,25 +63,27 @@ Input:
 | `text` | string | yes | 1 to 10 000 characters. Markdown is stripped before synthesis. |
 | `voice` | enum of 28 Kokoro voice ids | no | default `af_heart` |
 | `speed` | number | no | 0.5 to 2.0, default 1.0 |
+| `wait` | boolean | no | default false. Return when this utterance finishes or is stopped, instead of when its first audio starts. |
 
 Output (structured content, also serialized as text):
 
 ```json
 {
   "status": "speaking",
+  "speaking": true,
   "voice": "af_heart",
   "sentences": 4,
   "queued_behind": 0
 }
 ```
 
-`status` is `"speaking"` (the player started for this utterance), `"queued"` (another utterance is active; this one will follow), or `"cancelled"` (a `stop` arrived before it started). `sentences` is the chunk count after splitting, known before synthesis.
+`status` is `"speaking"` (the player started for this utterance), `"queued"` (another utterance is active; this one will follow), `"cancelled"` (a `stop` ended this utterance before the call returned), or `"finished"` (a waited utterance played to the end). Without `wait`, `"cancelled"` only happens before playback starts, and `"finished"` does not appear. `speaking` is whether voix is still playing or has speech queued when the call returns. With `wait: true` it is true only when other speech is still queued behind this utterance. `sentences` is the chunk count after splitting, known before synthesis.
 
-Errors before startup acknowledgement are returned as tool results with `isError: true` and a JSON body `{ "_tag": "<Code>", ...fields, "message": "..." }`. Codes: `EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`, `ModelDownloading` (model not ready after a 45 s bounded wait; includes `received`/`total` bytes), `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`, `SynthFailed`. Failures after the player starts, including nonzero exits after every fallback attempt and playback of queued utterances, are logged on stderr; an already returned response cannot report them. Invalid JSON shapes are rejected by the protocol layer as `-32602`.
+Errors before startup acknowledgement are returned as tool results with `isError: true` and a JSON body `{ "_tag": "<Code>", ...fields, "message": "..." }`. Codes: `EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`, `ModelDownloading` (model not ready after a 45 s bounded wait; includes `received`/`total` bytes), `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`, `SynthFailed`. Failures after the player starts, including nonzero exits after every fallback attempt and playback of queued utterances, are returned to the caller when `wait` is true. Otherwise they are logged on stderr, because an already returned response cannot report them. Invalid JSON shapes are rejected by the protocol layer as `-32602`.
 
-Progress: while `speak` waits for a model download it sends `notifications/progress` every two seconds if the client supplied a `progressToken`.
+Progress: while a `speak` call is still pending and the client supplied a `progressToken`, the server sends `notifications/progress` every two seconds. During a model download the notification reports received bytes and a total, and `progress` is at least one more than the previous value for that token. Otherwise the message is `Waiting for speech to finish`, `progress` increases by one, and `total` is omitted. `progress` never decreases for a token.
 
-Cancellation: `notifications/cancelled` interrupts the handler; an utterance that has not started is dropped.
+Cancellation: `notifications/cancelled` interrupts the handler. An utterance that has not started is dropped. A waited utterance that is already playing is stopped.
 
 ### `stop`
 
@@ -237,7 +239,7 @@ voix-mcp/
 │   │   ├── errors.ts               # Schema.TaggedError classes, VoixError union
 │   │   ├── paths.ts                # VOIX_HOME resolution
 │   │   ├── text.ts                 # markdown → speakable text, sentence split
-│   │   └── speaker.ts              # Speaker: queue, pipelining, speakAndWait, stop, awaitIdle
+│   │   └── speaker.ts              # Speaker: queue, pipelining, stop, awaitIdle
 │   ├── audio/
 │   │   ├── wav.ts                  # float PCM → 16-bit WAV
 │   │   └── player.ts               # Player service: macOS/Linux command players, null layer, env selection
@@ -272,8 +274,8 @@ voix-mcp/
 
 ## 9. Testing strategy
 
-- Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player, including per-utterance completion and cancellation; Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
-- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `cli.test.ts` checks Linux CLI failure exit codes with a cached model; `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio, while failures after real-audio startup are logged asynchronously. `runtime.test.ts` verifies through native `getenv` that the real loader overrides a telemetry opt-in; its child also uses CI suppression to avoid emitting telemetry if the test regresses.
+- Unit (`bun test`): text normalization and splitting; Speaker with a fake provider and a recording player, including per-utterance completion and cancellation. A waited `speak` returns `finished` with `speaking: false`, and the next `stop` reports `stopped: false`. Kokoro phonemizer/tokenizer parity with recorded values; WAV encoder.
+- Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `cli.test.ts` checks Linux CLI failure exit codes with a cached model; `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio. Failures after real-audio startup are logged asynchronously unless `wait` is true, in which case they return as tool errors. A waited `speak` with a `progressToken` receives increasing `notifications/progress`. `runtime.test.ts` verifies through native `getenv` that the real loader overrides a telemetry opt-in; its child also uses CI suppression to avoid emitting telemetry if the test regresses.
 - Release tests: `release.test.ts` table-tests the decisions in `scripts/release-core.ts`: planning inputs and cog output, release state, rejected pushes, tag checks, the latest release, and when `main` moved, published releases, successor runs, and retries with an injected sleep. It also runs `scripts/release.ts` against throwaway repositories with a local bare origin, real git and cog, and a fake `gh`: planning, a full release, a re-run that resumes from another directory, a push raced by `main`, a rejected push, a lost push response, and failed or missing commands.
 - Integration: Kokoro synthesis and the MCP stdio round trip run only when the model is present in the cache (skipped with a message otherwise); playback is disabled with `VOIX_PLAYER=none` so CI is silent.
 - Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client, with stdin kept open until the response arrives (Effect's stdio layer drops in-flight responses on EOF).
@@ -288,6 +290,7 @@ voix-mcp/
 - Effect issue #8710 (stdio drops in-flight responses on stdin close) affects one-shot pipelines only.
 - Bun minifier incident with Effect (effect-smol #2126): build without `--minify` unless the compiled smoke test passes with it.
 - A standalone Bun in `~/.bun/bin` ahead of mise on PATH shadows the pinned version; `scripts/build.ts` spawns `process.execPath` so the embedded runtime still matches whatever Bun ran the build.
+- Cancelling a waited `speak` while audio is already playing stops that utterance. Leaving it playing and detaching the waiter is unresolved.
 
 ## 11. Measurements behind the decisions (this machine, M-series, Bun 1.3.9)
 

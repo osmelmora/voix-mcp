@@ -78,7 +78,7 @@ The agent gets two tools:
 
 | tool | what it does |
 | --- | --- |
-| `speak` `{ text, voice?, speed? }` | Speak text. Returns when the player has started for the first audio batch (or `queued` if another utterance is active). |
+| `speak` `{ text, voice?, speed?, wait? }` | Speak text. By default it returns when the player has started for the first audio batch, or at once with `queued` if another utterance is active. With `wait: true` it returns when this utterance has finished playing (`finished`) or a `stop` cut it short (`cancelled`), and a playback failure partway through comes back as a tool error. `speaking` says whether voix is still playing or has more queued when the call returns. |
 | `stop` | Stop immediately and drop the queue. |
 
 Errors come back as typed tool errors (`EmptyText`, `TextTooLong`, `InvalidVoice`, `InvalidSpeed`, `ModelDownloading`, `DownloadFailed`, `ChecksumMismatch`, `PlayerNotFound`, `PlaybackFailed`, `SynthFailed`). The server also publishes short usage instructions and the resource `skill://voix/SKILL.md`, which is the same text as [skills/voix/SKILL.md](skills/voix/SKILL.md). Copy that folder into your agent's skills directory if it supports skills.
