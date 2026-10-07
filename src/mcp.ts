@@ -4,15 +4,21 @@ import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import skillMarkdown from "../skills/voix/SKILL.md" with { type: "text" };
 import { VoixErrorSchema } from "./core/errors.ts";
-import { Speaker, SPEED_MAX, SPEED_MIN } from "./core/speaker.ts";
+import {
+  SpeakResultSchema,
+  Speaker,
+  SPEED_MAX,
+  SPEED_MIN,
+} from "./core/speaker.ts";
 import { MAX_TEXT_LENGTH } from "./core/text.ts";
 import { DEFAULT_VOICE, KOKORO_VOICE_IDS } from "./providers/kokoro/voices.ts";
 import { Provider } from "./providers/provider.ts";
+import type { ProviderStatus } from "./providers/provider.ts";
 import { VERSION } from "./version.ts";
 
 export const SKILL_URI = "skill://voix/SKILL.md";
 
-export const INSTRUCTIONS = `voix speaks text out loud on the user's machine with a local TTS model. Use \`speak\` when the user asks to hear something, wants a spoken update or summary, or a short audible notification is better than text. Write plain spoken prose: no markdown, lists, code, URLs or paths; short sentences; numbers and abbreviations written the way they are said. Call \`speak\` once with the whole message; it returns when the player has started for the first audio batch. Use \`stop\` to interrupt, then \`speak\` again to replace. If \`speak\` reports ModelDownloading, the model is being fetched on first use: tell the user and retry shortly. Full guidance: resource ${SKILL_URI}.`;
+export const INSTRUCTIONS = `voix speaks text out loud on the user's machine with a local TTS model. Use \`speak\` when the user asks to hear something, wants a spoken update or summary, or a short audible notification is better than text. Write plain spoken prose: no markdown, lists, code, URLs or paths; short sentences; numbers and abbreviations written the way they are said. Call \`speak\` once with the whole message; it returns when the player has started for the first audio batch. Pass \`wait: true\` when your next step must not overlap the speech; the call then returns when it has finished or was stopped. Use \`stop\` to interrupt, then \`speak\` again to replace. If \`speak\` reports ModelDownloading, the model is being fetched on first use: tell the user and retry shortly. Full guidance: resource ${SKILL_URI}.`;
 
 const SpeakParams = Schema.Struct({
   speed: Schema.optional(
@@ -28,13 +34,12 @@ const SpeakParams = Schema.Struct({
       description: `Voice id. Default ${DEFAULT_VOICE}. Prefix: af/am American female/male, bf/bm British female/male.`,
     })
   ),
-});
-
-const SpeakResult = Schema.Struct({
-  queued_behind: Schema.Number,
-  sentences: Schema.Number,
-  status: Schema.Literals(["speaking", "queued", "cancelled"]),
-  voice: Schema.String,
+  wait: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Return when this utterance has finished playing or been stopped, instead of when it starts. Default false.",
+    })
+  ),
 });
 
 const StopResult = Schema.Struct({ stopped: Schema.Boolean });
@@ -42,11 +47,11 @@ const StopResult = Schema.Struct({ stopped: Schema.Boolean });
 const Speak = Tool.make("speak", {
   dependencies: [McpSchema.McpRequestContext],
   description:
-    'Speak text aloud through the local speakers. Returns when the player has started for the first audio batch (or immediately with status "queued" if another utterance is active); it does not wait for playback to finish. Utterances play in order.',
+    'Speak text aloud through the local speakers. By default returns when the player has started for the first audio batch, or immediately with status "queued" if another utterance is active. With wait: true, returns when this utterance has finished ("finished") or was stopped ("cancelled"), and reports playback failures as errors. Utterances play in order.',
   failure: VoixErrorSchema,
   failureMode: "return",
   parameters: SpeakParams,
-  success: SpeakResult,
+  success: SpeakResultSchema,
 }).annotate(Tool.Title, "Speak");
 
 const Stop = Tool.make("stop", {
@@ -60,6 +65,30 @@ const PROGRESS_INTERVAL = "2 seconds";
 
 const decodeProgressToken = Schema.decodeUnknownOption(McpSchema.ProgressToken);
 
+interface ProgressUpdate {
+  readonly message: string;
+  readonly progress: number;
+  readonly total?: number;
+}
+
+/** Next notification for one pending call. `progress` strictly increases for that token. */
+const nextProgress = (last: number, status: ProviderStatus): ProgressUpdate => {
+  if (Option.isSome(status.downloading)) {
+    const { received, total } = status.downloading.value;
+
+    return {
+      message: "Downloading the speech model",
+      progress: Math.max(received, last + 1),
+      total,
+    };
+  }
+
+  return {
+    message: "Waiting for speech to finish",
+    progress: last + 1,
+  };
+};
+
 const ToolHandlers = VoixToolkit.toLayer(
   Effect.gen(function* ToolHandlers() {
     const speaker = yield* Speaker;
@@ -67,22 +96,29 @@ const ToolHandlers = VoixToolkit.toLayer(
     const server = yield* McpServer.McpServer;
 
     const reportProgress = (token: string | number) =>
-      Effect.forever(
-        Effect.gen(function* reportProgressTick() {
-          yield* Effect.sleep(PROGRESS_INTERVAL);
-          const status = yield* provider.status;
+      Effect.gen(function* reportProgressLoop() {
+        let last = 0;
 
-          if (Option.isSome(status.downloading)) {
-            const { received, total } = status.downloading.value;
-            yield* server.notifications["notifications/progress"]({
-              message: "Downloading the speech model",
-              progress: received,
-              progressToken: token,
-              total,
-            });
-          }
-        })
-      );
+        while (true) {
+          yield* Effect.sleep(PROGRESS_INTERVAL);
+          const update = nextProgress(last, yield* provider.status);
+
+          yield* update.total === undefined
+            ? server.notifications["notifications/progress"]({
+                message: update.message,
+                progress: update.progress,
+                progressToken: token,
+              })
+            : server.notifications["notifications/progress"]({
+                message: update.message,
+                progress: update.progress,
+                progressToken: token,
+                total: update.total,
+              });
+
+          last = update.progress;
+        }
+      });
 
     return {
       speak: (params) =>
@@ -94,6 +130,7 @@ const ToolHandlers = VoixToolkit.toLayer(
             speed: params.speed,
             text: params.text,
             voice: params.voice,
+            wait: params.wait,
           });
 
           return Option.isSome(token)
