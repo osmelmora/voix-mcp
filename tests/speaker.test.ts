@@ -310,7 +310,7 @@ describe("Speaker", () => {
         expect(yield* Fiber.join(queued)).toEqual({
           queued_behind: 1,
           sentences: 1,
-          speaking: true,
+          speaking: false,
           status: "cancelled",
           voice: "v1",
         });

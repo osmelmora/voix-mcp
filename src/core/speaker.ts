@@ -348,11 +348,12 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
         });
 
       const stop: Effect.Effect<StopResult> = Effect.gen(function* stop() {
+        // Drop the queue before interrupting so the worker cannot start another job.
+        // Mark cancelled without settling yet: waiters must not observe mid-teardown `speaking`.
         const dropped = yield* Queue.clear(jobs);
 
         for (const job of dropped) {
           yield* Ref.set(job.cancelled, true);
-          yield* settle(job, Exit.succeed("cancelled"));
         }
 
         const running = yield* Ref.get(current);
@@ -363,6 +364,11 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
 
         if (Option.isSome(running)) {
           yield* Fiber.interrupt(running.value.fiber);
+          yield* Fiber.await(running.value.fiber);
+        }
+
+        for (const job of dropped) {
+          yield* settle(job, Exit.succeed("cancelled"));
         }
 
         return { stopped: dropped.length > 0 || interrupted };

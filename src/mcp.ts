@@ -71,15 +71,21 @@ interface ProgressUpdate {
   readonly total?: number;
 }
 
-const nextProgress = (last: number, status: ProviderStatus): ProgressUpdate => {
+export const nextProgress = (
+  last: number,
+  status: ProviderStatus
+): ProgressUpdate => {
   if (Option.isSome(status.downloading)) {
     const { received, total } = status.downloading.value;
+    const progress = Math.min(total, Math.max(received, last + 1));
 
-    return {
-      message: "Downloading the speech model",
-      progress: Math.max(received, last + 1),
-      total,
-    };
+    if (progress > last) {
+      return {
+        message: "Downloading the speech model",
+        progress,
+        total,
+      };
+    }
   }
 
   return {
