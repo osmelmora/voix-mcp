@@ -2,6 +2,15 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.0 - 2026-10-08
+#### Features
+- (**mcp**) optional wait on speak plus speaking status (#28) - (f8bcbb9) - Osmel Mora, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Cursor Agent*, *Osmel Mora*
+#### Documentation
+- describe the release script and its tests - (5a8f88f) - Osmel Mora, *Claude Opus 5.5*
+- describe releases from CI - (55639cc) - Osmel Mora, *Claude Opus 5.5*
+
+- - -
+
 ## v0.2.0 - 2026-10-05
 #### Features
 - (**linux**) support x64 builds and playback - (621a60c) - Osmel Mora, *Claude Opus 5.5*
