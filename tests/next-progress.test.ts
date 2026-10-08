@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { Option } from "effect";
 
 import { nextProgress } from "../src/mcp.ts";
