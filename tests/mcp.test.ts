@@ -6,7 +6,7 @@ import type { PipedSubprocess } from "bun";
 import type { Schema } from "effect";
 
 import { isModelInstalled } from "../src/providers/kokoro/model.ts";
-import { failsAfterStartupCheck } from "./helpers/player.ts";
+import { failsAfterStartupCheck, playsFor } from "./helpers/player.ts";
 import { cliCommand, waitUntil } from "./helpers/process.ts";
 import { useShellFixtures } from "./helpers/shell.ts";
 import type { ShellFixture } from "./helpers/shell.ts";
@@ -172,6 +172,7 @@ describeMcp("voix mcp (stdio)", () => {
 
     expect(init.result.serverInfo.name).toBe("voix");
     expect(init.result.instructions).toContain("speak");
+    expect(init.result.instructions).toContain("wait: true");
   });
 
   afterAll(() => client.stop());
@@ -185,6 +186,18 @@ describeMcp("voix mcp (stdio)", () => {
       speak.inputSchema.properties.voice.enum ??
         speak.inputSchema.properties.voice.anyOf
     ).toBeDefined();
+    expect(speak.inputSchema.properties.wait.anyOf[0].type).toBe("boolean");
+    expect(speak.inputSchema.properties.wait.anyOf[1]).toEqual({
+      type: "null",
+    });
+    expect(speak.inputSchema.required).toEqual(["text"]);
+    expect(speak.outputSchema.properties.speaking.type).toBe("boolean");
+    expect(speak.outputSchema.properties.status.enum).toEqual([
+      "speaking",
+      "queued",
+      "cancelled",
+      "finished",
+    ]);
   });
 
   test("serves the skill resource", async () => {
@@ -204,8 +217,13 @@ describeMcp("voix mcp (stdio)", () => {
     });
 
     expect(res.result.isError).toBeFalsy();
-    expect(res.result.structuredContent.status).toBe("speaking");
-    expect(res.result.structuredContent.sentences).toBe(2);
+    expect(res.result.structuredContent).toEqual({
+      queued_behind: 0,
+      sentences: 2,
+      speaking: true,
+      status: "speaking",
+      voice: "af_heart",
+    });
 
     const stop = await client.request("tools/call", {
       arguments: {},
@@ -233,6 +251,22 @@ describeMcp("voix mcp (stdio)", () => {
 
     expect(res.error?.code).toBe(-32_602);
   });
+
+  test("wait returns finished and speaking false", async () => {
+    const res = await client.request("tools/call", {
+      arguments: { text: "Hello.", wait: true },
+      name: "speak",
+    });
+
+    expect(res.result.isError).toBeFalsy();
+    expect(res.result.structuredContent).toEqual({
+      queued_behind: 0,
+      sentences: 1,
+      speaking: false,
+      status: "finished",
+      voice: "af_heart",
+    });
+  }, 90_000);
 });
 
 describe.skipIf(process.platform !== "linux" || !isModelInstalled())(
@@ -259,7 +293,13 @@ describe.skipIf(process.platform !== "linux" || !isModelInstalled())(
           const response = await speakHello(client);
 
           expect(response.result.isError).toBeFalsy();
-          expect(response.result.structuredContent.status).toBe("speaking");
+          expect(response.result.structuredContent).toEqual({
+            queued_behind: 0,
+            sentences: 1,
+            speaking: true,
+            status: "speaking",
+            voice: "af_heart",
+          });
           await waitUntil(() =>
             client.stderr.join("").includes("aplay exited with code 7")
           );
@@ -287,5 +327,60 @@ describe.skipIf(process.platform !== "linux" || !isModelInstalled())(
         }
       );
     }, 90_000);
+
+    test("wait returns PlaybackFailed when playback fails after startup", async () => {
+      await withFakePlayers(
+        (shell) => shell.command("aplay", failsAfterStartupCheck(7)),
+        async (client) => {
+          const response = await client.request("tools/call", {
+            arguments: { text: "Hello.", wait: true },
+            name: "speak",
+          });
+
+          expect(response.result.isError).toBe(true);
+          const error = JSON.parse(response.result.content[0].text);
+          expect(error._tag).toBe("PlaybackFailed");
+          expect(error.reason).toContain("aplay exited with code 7");
+        }
+      );
+    }, 90_000);
+
+    test("wait sends increasing progress while speech plays", async () => {
+      await withFakePlayers(
+        (shell) => shell.command("aplay", playsFor(5)),
+        async (client) => {
+          const response = await client.request(
+            "tools/call",
+            {
+              _meta: { progressToken: "wait-1" },
+              arguments: {
+                text: "Hello from the progress test.",
+                wait: true,
+              },
+              name: "speak",
+            },
+            30_000
+          );
+
+          expect(response.result.isError).toBeFalsy();
+          expect(response.result.structuredContent.status).toBe("finished");
+          expect(response.result.structuredContent.speaking).toBe(false);
+
+          const progress = client.notifications.filter(
+            (note) => note.method === "notifications/progress"
+          );
+
+          expect(progress.length).toBeGreaterThanOrEqual(2);
+
+          for (const [index, note] of progress.entries()) {
+            expect(note.params).toEqual({
+              message: "Waiting for speech to finish",
+              progress: index + 1,
+              progressToken: "wait-1",
+            });
+          }
+        }
+      );
+    }, 45_000);
   }
 );

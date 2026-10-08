@@ -147,7 +147,7 @@ const say = Command.make(
       }
 
       const speaker = yield* Speaker;
-      yield* speaker.speakAndWait({ speed, text: input, voice });
+      yield* speaker.speak({ speed, text: input, voice, wait: true });
     })
 ).pipe(Command.withDescription("Speak text through the local speakers"));
 

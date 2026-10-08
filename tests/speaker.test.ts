@@ -98,9 +98,13 @@ describe("Speaker", () => {
     await run(20, 60, (speaker, played) =>
       Effect.gen(function* batching() {
         const result = yield* speaker.speak({ text: "One. Two. Three. Four." });
-        expect(result.status).toBe("speaking");
-        expect(result.sentences).toBe(4);
-        expect(result.queued_behind).toBe(0);
+        expect(result).toEqual({
+          queued_behind: 0,
+          sentences: 4,
+          speaking: true,
+          status: "speaking",
+          voice: "v1",
+        });
         expect(played[0]?.samples).toBe("One.".length);
         expect(played[0]?.completed).toBe(false);
         expect(played).toHaveLength(1);
@@ -120,9 +124,20 @@ describe("Speaker", () => {
       Effect.gen(function* queueing() {
         const a = yield* speaker.speak({ text: "AAAA." });
         const b = yield* speaker.speak({ text: "BB." });
-        expect(a.status).toBe("speaking");
-        expect(b.status).toBe("queued");
-        expect(b.queued_behind).toBe(1);
+        expect(a).toEqual({
+          queued_behind: 0,
+          sentences: 1,
+          speaking: true,
+          status: "speaking",
+          voice: "v1",
+        });
+        expect(b).toEqual({
+          queued_behind: 1,
+          sentences: 1,
+          speaking: true,
+          status: "queued",
+          voice: "v1",
+        });
         yield* speaker.awaitIdle;
         expect(played.map((p) => p.samples)).toEqual([
           "AAAA.".length,
@@ -138,7 +153,13 @@ describe("Speaker", () => {
         yield* speaker.speak({ text: "First. Second. Third." });
         const started = Date.now();
         const queued = yield* speaker.speak({ text: "Later." });
-        expect(queued.status).toBe("queued");
+        expect(queued).toEqual({
+          queued_behind: 1,
+          sentences: 1,
+          speaking: true,
+          status: "queued",
+          voice: "v1",
+        });
 
         const stopped = yield* speaker.stop;
         expect(stopped.stopped).toBe(true);
@@ -182,27 +203,127 @@ describe("Speaker", () => {
     );
   });
 
-  test("speakAndWait waits for the complete utterance", async () => {
-    await run(5, 40, (speaker, played) =>
+  test("wait returns finished with speaking false, and stop finds nothing", async () => {
+    await run(5, 20, (speaker, played) =>
       Effect.gen(function* completion() {
-        yield* speaker.speakAndWait({ text: "One. Two." });
+        expect(yield* speaker.speak({ text: "One. Two.", wait: true })).toEqual(
+          {
+            queued_behind: 0,
+            sentences: 2,
+            speaking: false,
+            status: "finished",
+            voice: "v1",
+          }
+        );
         expect(played.map((chunk) => chunk.samples)).toEqual([
           "One.".length,
           "Two.".length,
         ]);
-        // Playback has finished, so stop must not find an in-progress utterance once the worker is idle.
-        yield* speaker.awaitIdle;
-        const stopped = yield* speaker.stop;
-        expect(stopped.stopped).toBe(false);
+        expect(yield* speaker.stop).toEqual({ stopped: false });
       })
     );
   });
 
-  test("speakAndWait fails when synthesis fails before any audio", async () => {
+  test("a waited utterance reports speech queued behind it", async () => {
+    await run(5, 40, (speaker) =>
+      Effect.gen(function* behind() {
+        const first = yield* Effect.forkChild(
+          speaker.speak({ text: "First.", wait: true }),
+          { startImmediately: true }
+        );
+
+        yield* Effect.sleep("20 millis");
+        const second = yield* speaker.speak({ text: "Second." });
+        expect(second).toEqual({
+          queued_behind: 1,
+          sentences: 1,
+          speaking: true,
+          status: "queued",
+          voice: "v1",
+        });
+        expect(yield* Fiber.join(first)).toEqual({
+          queued_behind: 0,
+          sentences: 1,
+          speaking: true,
+          status: "finished",
+          voice: "v1",
+        });
+      })
+    );
+  });
+
+  test("a queued waited utterance plays after the first and finishes", async () => {
+    await run(5, 20, (speaker, played) =>
+      Effect.gen(function* queuedWait() {
+        yield* speaker.speak({ text: "AAAA." });
+        expect(yield* speaker.speak({ text: "BB.", wait: true })).toEqual({
+          queued_behind: 1,
+          sentences: 1,
+          speaking: false,
+          status: "finished",
+          voice: "v1",
+        });
+        expect(played.map((chunk) => chunk.samples)).toEqual([
+          "AAAA.".length,
+          "BB.".length,
+        ]);
+      })
+    );
+  });
+
+  test("stop during a waited utterance returns cancelled", async () => {
+    await run(5, 500, (speaker, played) =>
+      Effect.gen(function* stopWhileWaiting() {
+        const waiting = yield* Effect.forkChild(
+          speaker.speak({ text: "Long.", wait: true }),
+          { startImmediately: true }
+        );
+
+        while (played.length === 0) {
+          yield* Effect.sleep("5 millis");
+        }
+
+        expect(yield* speaker.stop).toEqual({ stopped: true });
+        expect(yield* Fiber.join(waiting)).toEqual({
+          queued_behind: 0,
+          sentences: 1,
+          speaking: false,
+          status: "cancelled",
+          voice: "v1",
+        });
+      }).pipe(Effect.timeout("2 seconds"))
+    );
+  });
+
+  test("stop before a queued waited utterance starts returns cancelled", async () => {
+    await run(5, 500, (speaker, played) =>
+      Effect.gen(function* stopQueued() {
+        yield* speaker.speak({ text: "First." });
+
+        const queued = yield* Effect.forkChild(
+          speaker.speak({ text: "Queued.", wait: true }),
+          { startImmediately: true }
+        );
+
+        yield* Effect.sleep("15 millis");
+        yield* speaker.stop;
+        expect(yield* Fiber.join(queued)).toEqual({
+          queued_behind: 1,
+          sentences: 1,
+          speaking: false,
+          status: "cancelled",
+          voice: "v1",
+        });
+        expect(played).toHaveLength(1);
+      }).pipe(Effect.timeout("2 seconds"))
+    );
+  });
+
+  test("wait fails when synthesis fails before any audio", async () => {
     await run(5, 40, (speaker, played) =>
       Effect.gen(function* failBeforeAudio() {
         const error = yield* Effect.flip(
-          speaker.speakAndWait({ text: "Fail." })
+          speaker.speak({ text: "Fail.", wait: true })
         );
 
         expect(error._tag).toBe("SynthFailed");
@@ -211,11 +332,11 @@ describe("Speaker", () => {
     );
   });
 
-  test("speakAndWait fails when synthesis fails after playback starts", async () => {
-    await run(5, 40, (speaker, played) =>
+  test("wait surfaces a failure after playback started", async () => {
+    await run(5, 20, (speaker, played) =>
       Effect.gen(function* failAfterAudio() {
         const error = yield* Effect.flip(
-          speaker.speakAndWait({ text: "One. Fail." })
+          speaker.speak({ text: "One. Fail.", wait: true })
         );
 
         expect(error._tag).toBe("SynthFailed");
@@ -224,29 +345,18 @@ describe("Speaker", () => {
     );
   });
 
-  test("stop settles completion waiters for active and queued speech", async () => {
-    await run(5, 500, (speaker, played) =>
-      Effect.gen(function* cancelWaiters() {
-        const active = yield* Effect.forkChild(
-          speaker.speakAndWait({ text: "First." }),
-          { startImmediately: true }
-        );
-
-        while (played.length === 0) {
-          yield* Effect.sleep("5 millis");
-        }
-
-        const queued = yield* Effect.forkChild(
-          speaker.speakAndWait({ text: "Queued." }),
-          { startImmediately: true }
-        );
-
-        yield* speaker.stop;
-        yield* Fiber.join(active);
-        yield* Fiber.join(queued);
+  test("without wait the same failure returns speaking", async () => {
+    await run(5, 20, (speaker) =>
+      Effect.gen(function* failAfterReturn() {
+        expect(yield* speaker.speak({ text: "One. Fail." })).toEqual({
+          queued_behind: 0,
+          sentences: 2,
+          speaking: true,
+          status: "speaking",
+          voice: "v1",
+        });
         yield* speaker.awaitIdle;
-        expect(played).toHaveLength(1);
-      }).pipe(Effect.timeout("2 seconds"))
+      })
     );
   });
 });

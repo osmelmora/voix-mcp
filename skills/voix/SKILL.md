@@ -25,12 +25,12 @@ Write the way a person talks, not the way a document reads.
 
 ## Calling the tools
 
-`speak` returns when the player has started for the first audio batch; it does not wait for the end. Its result tells you how many sentences were queued and whether the player started or this utterance is queued behind another.
+Leave `wait` off so you can keep working while voix talks. Pass `wait: true` only when your next step must not overlap the speech. Examples are a command that plays sound or takes over the terminal, or speech that is the last thing you do before ending. Keep waited speech short, because some clients cap how long a tool call may take. Later utterances do not extend the wait. If a waited `speak` returns `PlaybackFailed` or `SynthFailed`, part of the message may have played. Tell the user speech was cut short and give the message in text. `speaking` is true when voix is still playing or has more speech queued at the moment the call returns.
 
 - Call `speak` once with the whole message rather than once per sentence.
 - To replace what is being said, call `stop` and then `speak`.
 - If `speak` returns `ModelDownloading`, the speech model is still being fetched on first use. Tell the user it is downloading and try again in a minute.
-- If `speak` returns `PlayerNotFound` or `PlaybackFailed`, tell the user speech could not start and provide the message in text. Failures after playback starts are logged by the server.
+- If `speak` returns `PlayerNotFound` or `PlaybackFailed` before audio starts, tell the user speech could not start and give the message in text. Without `wait`, a failure after playback starts is logged by the server.
 - Default voice is `af_heart`. Only change `voice` or `speed` when the user asks.
 
 ## Example
