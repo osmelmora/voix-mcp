@@ -1,4 +1,13 @@
-import { Deferred, Effect, Exit, Layer, Option, Ref, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Ref,
+  Stream,
+} from "effect";
 import type { InferenceSession } from "onnxruntime-node";
 
 import type { PrepareError } from "../../core/errors.ts";
@@ -82,46 +91,63 @@ export const KokoroProvider: Layer.Layer<Provider> = Layer.effect(
       }
     );
 
-    // Memoized: the first caller starts the work in a detached fiber so that an interrupted caller
-    // (a cancelled tool call, Ctrl-C) does not strand later callers. Failures reset so a retry can happen.
-    const prepare: Effect.Effect<void, PrepareError> = Effect.gen(
-      function* prepare() {
-        // Effect's Deferred.make accepts void as its success type.
-        // oxlint-disable-next-line typescript/no-invalid-void-type
-        const fresh = yield* Deferred.make<void, PrepareError>();
+    // Preparation outlives the fiber that started it but not the provider: it runs in this layer's scope.
+    const scope = yield* Effect.scope;
 
-        type Slot = Option.Option<Deferred.Deferred<void, PrepareError>>;
+    // Memoized: the first caller starts the work in a fiber owned by the provider's scope, so an interrupted
+    // caller (a cancelled tool call) does not strand later callers, and shutdown interrupts and joins it.
+    // Publishing the slot and starting its owner are one uninterruptible step: a caller interrupted in between
+    // would leave a slot nothing ever settles. Only the wait is interruptible. A closed provider interrupts every
+    // caller, even after a successful preparation. The owner starts immediately so its exit handler is installed
+    // even when the scope closes while it starts; then it is interrupted at once and callers fail fast instead of
+    // waiting. Failures and interruptions reset so a retry can happen.
+    const prepare: Effect.Effect<void, PrepareError> =
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* prepareBody() {
+          if (Predicate.isTagged(scope.state, "Closed")) {
+            return yield* Effect.interrupt;
+          }
 
-        const [deferred, isOwner] = yield* Ref.modify(
-          prepared,
-          (
-            current: Slot
-          ): readonly [
-            readonly [Deferred.Deferred<void, PrepareError>, boolean],
-            Slot,
-          ] =>
-            Option.isSome(current)
-              ? [[current.value, false], current]
-              : [[fresh, true], Option.some(fresh)]
-        );
+          // Effect's Deferred.make accepts void as its success type.
+          // oxlint-disable-next-line typescript/no-invalid-void-type
+          const fresh = yield* Deferred.make<void, PrepareError>();
 
-        if (isOwner) {
-          yield* Effect.forkDetach(
-            Effect.gen(function* prepareInBackground() {
-              const exit = yield* Effect.exit(doPrepare);
+          type Slot = Option.Option<Deferred.Deferred<void, PrepareError>>;
 
-              if (Exit.isFailure(exit)) {
-                yield* Ref.set(prepared, Option.none());
-              }
-
-              yield* Deferred.done(deferred, exit);
-            })
+          const [deferred, isOwner] = yield* Ref.modify(
+            prepared,
+            (
+              current: Slot
+            ): readonly [
+              readonly [Deferred.Deferred<void, PrepareError>, boolean],
+              Slot,
+            ] =>
+              Option.isSome(current)
+                ? [[current.value, false], current]
+                : [[fresh, true], Option.some(fresh)]
           );
-        }
 
-        return yield* Deferred.await(deferred);
-      }
-    );
+          if (isOwner) {
+            yield* Effect.forkIn(
+              doPrepare.pipe(
+                Effect.onExit((exit) =>
+                  Effect.gen(function* settle() {
+                    if (Exit.isFailure(exit)) {
+                      yield* Ref.set(prepared, Option.none());
+                    }
+
+                    yield* Deferred.done(deferred, exit);
+                  })
+                )
+              ),
+              scope,
+              { startImmediately: true }
+            );
+          }
+
+          return yield* restore(Deferred.await(deferred));
+        })
+      );
 
     const status: Effect.Effect<ProviderStatus> = Effect.gen(
       function* status() {
