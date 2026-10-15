@@ -136,11 +136,12 @@ describe("model download", () => {
 
       try {
         // The child may write at most 256 blocks (128 or 256 KiB, depending on the shell), far less than the model.
+        // Ignoring SIGXFSZ, which survives exec, makes an oversized write fail with EFBIG instead of killing it.
         const child = Bun.spawn(
           [
             "/bin/sh",
             "-c",
-            'ulimit -f 256 && exec "$@"',
+            'trap "" XFSZ; ulimit -f 256 && exec "$@"',
             "sh",
             process.execPath,
             path.join(import.meta.dir, "fixtures/download.ts"),
