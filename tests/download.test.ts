@@ -129,6 +129,56 @@ describe("model download", () => {
   );
 
   test.serial(
+    "a file that could not be written in full is never published",
+    async () => {
+      const gated = serveGatedModels([good]);
+      gated.release(0);
+
+      try {
+        // The child may write at most 256 blocks (128 or 256 KiB, depending on the shell), far less than the model.
+        const child = Bun.spawn(
+          [
+            "/bin/sh",
+            "-c",
+            'ulimit -f 256 && exec "$@"',
+            "sh",
+            process.execPath,
+            path.join(import.meta.dir, "fixtures/download.ts"),
+            expected.sha256,
+            String(expected.size),
+          ],
+          {
+            env: {
+              ...process.env,
+              // Keeps Bun's own cache writes out of the child's file-size limit.
+              BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+              VOIX_HOME: home,
+              VOIX_MODEL_URL: gated.server.url.href,
+            },
+            stderr: "pipe",
+            stdout: "pipe",
+          }
+        );
+
+        const [output, code] = await Promise.all([
+          new Response(child.stdout).text(),
+          child.exited,
+        ]);
+
+        expect({ code, output: JSON.parse(output) }).toEqual({
+          code: 0,
+          output: { error: "DownloadFailed", success: false },
+        });
+        expect(existsSync(modelPath())).toBe(false);
+        expect(tempFiles()).toEqual([]);
+      } finally {
+        await gated.server.stop(true);
+        rmSync(modelDir(), { force: true, recursive: true });
+      }
+    }
+  );
+
+  test.serial(
     "removes temp files crashed attempts left, not a live peer's",
     async () => {
       const gated = serveGatedModels([good]);

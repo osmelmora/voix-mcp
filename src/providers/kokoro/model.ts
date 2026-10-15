@@ -34,8 +34,6 @@ export const isModelInstalled = (): boolean => {
 
 const PROGRESS_STEP = 2 * 1024 * 1024;
 
-const FLUSH_STEP = 16 * 1024 * 1024;
-
 /** A download's temp file this old was left by a crashed attempt: a live one is written to far more often. */
 const STALE_TEMP_MS = 24 * 60 * 60 * 1000;
 
@@ -64,7 +62,49 @@ export interface ExpectedModel {
   readonly size: number;
 }
 
-/** Fetches the model into `part`, verifies it, and only then renames exactly that file to `target`. */
+/** Writes all of `chunk` at the end of the file, failing on any write error (a full disk, a file-size limit). */
+const writeAll = (
+  file: fs.promises.FileHandle,
+  chunk: Uint8Array,
+  fail: (reason: string) => DownloadFailed
+): Effect.Effect<void, DownloadFailed> =>
+  Effect.gen(function* writeAllBody() {
+    let written = 0;
+
+    // A short write continues where it stopped.
+    while (written < chunk.byteLength) {
+      const offset = written;
+
+      const { bytesWritten } = yield* Effect.tryPromise({
+        catch: (e) => fail(e instanceof Error ? e.message : String(e)),
+        try: () => file.write(chunk, offset),
+      });
+
+      if (bytesWritten === 0) {
+        return yield* fail("could not write the model file");
+      }
+
+      written += bytesWritten;
+    }
+  });
+
+/** The SHA-256 of what is on disk at `file`, so a verified model is the file that gets published. */
+const hashFile = (
+  file: string,
+  fail: (reason: string) => DownloadFailed
+): Effect.Effect<string, DownloadFailed> => {
+  const hasher = new Bun.CryptoHasher("sha256");
+
+  return Stream.fromReadableStream({
+    evaluate: () => Bun.file(file).stream(),
+    onError: (e) => fail(e instanceof Error ? e.message : String(e)),
+  }).pipe(
+    Stream.runForEach((chunk) => Effect.sync(() => hasher.update(chunk))),
+    Effect.map(() => hasher.digest("hex"))
+  );
+};
+
+/** Fetches the model into `part`, verifies the file on disk, and only then renames exactly that file to `target`. */
 const receive = ({
   expected,
   fail,
@@ -95,39 +135,58 @@ const receive = ({
     const total =
       Number(response.headers.get("content-length")) || expected.size;
 
-    const hasher = new Bun.CryptoHasher("sha256");
-    const writer = Bun.file(part).writer();
     let received = 0;
     let lastReported = 0;
-    let lastFlushed = 0;
 
-    yield* Stream.fromReadableStream({
-      evaluate: () => body,
-      onError: (e) => fail(e instanceof Error ? e.message : String(e)),
-    }).pipe(
-      Stream.runForEach((chunk) =>
-        Effect.gen(function* writeChunk() {
-          hasher.update(chunk);
-          writer.write(chunk);
-          received += chunk.byteLength;
+    // Every write is awaited and checked, so a full disk or a file-size limit fails the download.
+    yield* Effect.acquireUseRelease(
+      Effect.tryPromise({
+        catch: (e) => fail(e instanceof Error ? e.message : String(e)),
+        try: () => fs.promises.open(part, "wx"),
+      }),
+      (file) =>
+        Stream.fromReadableStream({
+          evaluate: () => body,
+          onError: (e) => fail(e instanceof Error ? e.message : String(e)),
+        }).pipe(
+          Stream.runForEach((chunk) =>
+            Effect.gen(function* writeChunk() {
+              yield* writeAll(file, chunk, fail);
+              received += chunk.byteLength;
 
-          if (received - lastFlushed >= FLUSH_STEP) {
-            lastFlushed = received;
-            yield* Effect.promise(() => Promise.resolve(writer.flush()));
-          }
-
-          if (received - lastReported >= PROGRESS_STEP || received >= total) {
-            lastReported = received;
-            yield* onProgress(received, total);
-          }
-        })
-      ),
-      Effect.ensuring(
-        Effect.promise(() => Promise.resolve(writer.end())).pipe(Effect.ignore)
-      )
+              if (
+                received - lastReported >= PROGRESS_STEP ||
+                received >= total
+              ) {
+                lastReported = received;
+                yield* onProgress(received, total);
+              }
+            })
+          ),
+          Effect.andThen(
+            Effect.tryPromise({
+              catch: (e) => fail(e instanceof Error ? e.message : String(e)),
+              try: () => file.close(),
+            })
+          )
+        ),
+      // Closing twice is harmless; this one only covers failures and interruption.
+      (file) => Effect.tryPromise(() => file.close()).pipe(Effect.ignore)
     );
 
-    const actual = hasher.digest("hex");
+    // Verifies the bytes the rename will publish, not the bytes the network sent.
+    const size = yield* Effect.try({
+      catch: (e) => fail(e instanceof Error ? e.message : String(e)),
+      try: () => fs.statSync(part).size,
+    });
+
+    if (size !== received) {
+      return yield* fail(
+        `only ${size} of ${received} received bytes reached the disk`
+      );
+    }
+
+    const actual = yield* hashFile(part, fail);
 
     if (actual !== expected.sha256) {
       return yield* new ChecksumMismatch({
