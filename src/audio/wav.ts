@@ -63,7 +63,7 @@ export const concatPcm = (chunks: readonly Float32Array[]): Float32Array => {
   return out;
 };
 
-/** Count NaN and infinite samples. A model can emit them; encoding would turn them into silence. */
+/** Count NaN and infinite samples. A model can emit them; encoding turns NaN into silence and ±Infinity into full-scale clipping. */
 export const countNonFinite = (pcm: Float32Array): number => {
   let count = 0;
 

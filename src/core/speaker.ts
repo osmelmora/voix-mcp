@@ -43,7 +43,8 @@ export const FIRST_AUDIO_TIMEOUT = "45 seconds";
 
 /**
  * Synthesize sentences in order. A chunk with any NaN or infinite sample fails with SynthFailed
- * before it reaches a player or a WAV file, where it would otherwise become silence.
+ * before it reaches a player or a WAV file, where NaN would become silence and ±Infinity
+ * full-scale clipping. Finite chunks before it, even from the same sentence, may already have played.
  */
 export const synthesizeSentences = (
   provider: ProviderService,

@@ -425,7 +425,7 @@ describe("Speaker", () => {
     );
   });
 
-  test("non-finite audio in the first sentence fails speak before playback", async () => {
+  test("non-finite audio in a one-chunk first sentence fails speak before playback", async () => {
     await run(5, 20, (speaker, played) =>
       Effect.gen(function* nanBeforeAudio() {
         const error = yield* Effect.flip(speaker.speak({ text: "NaN. Two." }));
