@@ -104,10 +104,11 @@ voix mcp                                   # MCP server over stdio
 
 There is no config file. Defaults: voice `af_heart`, speed `1.0`.
 
-| variable           | effect                                            |
-| ------------------ | ------------------------------------------------- |
-| `VOIX_HOME`        | where models are stored (default `~/.cache/voix`) |
-| `VOIX_PLAYER=none` | disable audio output (tests, CI)                  |
+| variable | effect |
+| --- | --- |
+| `VOIX_HOME` | where models are stored (default `~/.cache/voix`) |
+| `VOIX_MODEL_URL` | download the model from a mirror; its pinned SHA-256 still applies |
+| `VOIX_PLAYER=none` | disable audio output (tests, CI) |
 
 ## How it works
 

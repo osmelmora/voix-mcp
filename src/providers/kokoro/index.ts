@@ -82,8 +82,12 @@ export const KokoroProvider: Layer.Layer<Provider> = Layer.effect(
       }
     );
 
-    // Memoized: the first caller starts the work in a detached fiber so that an interrupted caller
-    // (a cancelled tool call, Ctrl-C) does not strand later callers. Failures reset so a retry can happen.
+    // Preparation outlives the fiber that started it but not the provider: it runs in this layer's scope.
+    const scope = yield* Effect.scope;
+
+    // Memoized: the first caller starts the work in a fiber owned by the provider's scope, so an interrupted
+    // caller (a cancelled tool call) does not strand later callers, and shutdown interrupts and joins it.
+    // Failures and interruptions reset so a retry can happen.
     const prepare: Effect.Effect<void, PrepareError> = Effect.gen(
       function* prepare() {
         // Effect's Deferred.make accepts void as its success type.
@@ -106,16 +110,19 @@ export const KokoroProvider: Layer.Layer<Provider> = Layer.effect(
         );
 
         if (isOwner) {
-          yield* Effect.forkDetach(
-            Effect.gen(function* prepareInBackground() {
-              const exit = yield* Effect.exit(doPrepare);
+          yield* Effect.forkIn(
+            doPrepare.pipe(
+              Effect.onExit((exit) =>
+                Effect.gen(function* settle() {
+                  if (Exit.isFailure(exit)) {
+                    yield* Ref.set(prepared, Option.none());
+                  }
 
-              if (Exit.isFailure(exit)) {
-                yield* Ref.set(prepared, Option.none());
-              }
-
-              yield* Deferred.done(deferred, exit);
-            })
+                  yield* Deferred.done(deferred, exit);
+                })
+              )
+            ),
+            scope
           );
         }
 
