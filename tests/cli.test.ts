@@ -48,13 +48,15 @@ describe.skipIf(process.platform !== "linux" || !isModelInstalled())(
   }
 );
 
-const sayOut = (args: readonly string[], home: string) => {
-  const { directory } = createFixture();
-  const out = path.join(directory, "out.wav");
-
+const sayOut = (
+  args: readonly string[],
+  home: string,
+  timeout: number,
+  out = path.join(createFixture().directory, "out.wav")
+) => {
   const result = Bun.spawnSync([...cli, "say", "--out", out, ...args], {
     env: { ...process.env, VOIX_HOME: home, VOIX_PLAYER: "none" },
-    timeout: 60_000,
+    timeout,
   });
 
   return {
@@ -63,6 +65,25 @@ const sayOut = (args: readonly string[], home: string) => {
     stderr: new TextDecoder().decode(result.stderr),
   };
 };
+
+const SENTINEL = "not a directory";
+
+// A file where the models directory belongs, so any attempt to prepare the
+// model fails locally at mkdir, before the download can start.
+const blockedHome = () => {
+  const home = createFixture().directory;
+  const models = path.join(home, "models");
+  writeFileSync(models, SENTINEL);
+
+  return {
+    home,
+    untouched: () =>
+      statSync(models).isFile() && readFileSync(models, "utf-8") === SENTINEL,
+  };
+};
+
+// Startup only; a regression that reaches model preparation fails fast too.
+const REJECT_TIMEOUT = 5000;
 
 // Validation runs before the model is touched, so these pass without it on every platform.
 describe("say --out rejects what playback rejects", () => {
@@ -75,34 +96,32 @@ describe("say --out rejects what playback rejects", () => {
     { args: ["****"], error: "Nothing to speak" },
     { args: ["--voice", "nope", "Hello."], error: 'Unknown voice "nope"' },
   ])("$error, with no model and no output file", ({ args, error }) => {
-    const home = createFixture().directory;
-    const result = sayOut(args, home);
+    const { home, untouched } = blockedHome();
+    const result = sayOut(args, home, REJECT_TIMEOUT);
 
     expect(result.stderr).toContain(`error: ${error}`);
     expect(result.exitCode).toBe(1);
     expect(existsSync(result.out)).toBe(false);
-    expect(existsSync(path.join(home, "models"))).toBe(false);
+    expect(untouched()).toBe(true);
   });
 
   test("leaves an existing output file untouched", () => {
-    const home = createFixture().directory;
-    const { directory } = createFixture();
-    const out = path.join(directory, "keep.wav");
+    const { home, untouched } = blockedHome();
+    const out = path.join(createFixture().directory, "keep.wav");
     writeFileSync(out, "keep");
 
-    const result = Bun.spawnSync([...cli, "say", "--out", out, "****"], {
-      env: { ...process.env, VOIX_HOME: home, VOIX_PLAYER: "none" },
-      timeout: 60_000,
-    });
+    const result = sayOut(["****"], home, REJECT_TIMEOUT, out);
 
+    expect(result.stderr).toContain("error: Nothing to speak");
     expect(result.exitCode).toBe(1);
     expect(readFileSync(out, "utf-8")).toBe("keep");
+    expect(untouched()).toBe(true);
   });
 });
 
 describe.skipIf(!isModelInstalled())("say --out with the model", () => {
   test("writes a WAV", () => {
-    const result = sayOut(["Hello."], voixHome());
+    const result = sayOut(["Hello."], voixHome(), 60_000);
 
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
