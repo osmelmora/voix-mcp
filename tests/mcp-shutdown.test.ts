@@ -49,14 +49,11 @@ const readFirstLine = async (stream: ReadableStream<Uint8Array>) => {
   return text.slice(0, text.indexOf("\n"));
 };
 
-/** Only a download's temp file may remain: nothing at the model path that a later size check could accept. */
+/** An interrupted download removes its temp file, so nothing is left that a later size check could accept. */
 const expectNoModel = (home: string) => {
   const dir = path.join(home, "models", `kokoro-${KOKORO_MODEL.version}`);
-  expect(existsSync(path.join(dir, "model.onnx"))).toBe(false);
 
-  if (existsSync(dir)) {
-    expect(readdirSync(dir).filter((f) => !f.endsWith(".part"))).toEqual([]);
-  }
+  expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
 };
 
 describe("voix mcp shutdown on a cold cache", () => {

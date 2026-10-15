@@ -52,3 +52,48 @@ export const serveMissingModel = () => {
 
   return { requests: () => requests, server };
 };
+
+/**
+ * Serves `bodies[i]` to the i-th request in two halves: the first at once, the second only after `release(i)`, so a
+ * test can hold several downloads open at chosen points. `started(i)` resolves once request i has its first half.
+ */
+export const serveGatedModels = (bodies: readonly Uint8Array[]) => {
+  const started = bodies.map(() => Promise.withResolvers<undefined>());
+  const released = bodies.map(() => Promise.withResolvers<undefined>());
+  let requests = 0;
+
+  const server = Bun.serve({
+    fetch: () => {
+      const index = requests;
+      requests += 1;
+      const body = bodies[index];
+
+      if (body === undefined) {
+        return new Response("not found", { status: 404 });
+      }
+
+      const half = Math.floor(body.byteLength / 2);
+
+      return new Response(
+        new ReadableStream({
+          start: async (controller) => {
+            controller.enqueue(body.slice(0, half));
+            started[index]?.resolve();
+            await released[index]?.promise;
+            controller.enqueue(body.slice(half));
+            controller.close();
+          },
+        }),
+        { headers: { "content-length": String(body.byteLength) } }
+      );
+    },
+    idleTimeout: 0,
+    port: 0,
+  });
+
+  return {
+    release: (index: number) => released[index]?.resolve(),
+    server,
+    started: (index: number) => started[index]?.promise,
+  };
+};
