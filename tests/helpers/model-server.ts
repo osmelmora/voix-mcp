@@ -29,8 +29,26 @@ export const serveStalledModel = () => {
         { headers: { "content-length": String(KOKORO_MODEL.size) } }
       );
     },
+    // The default idle timeout would end the stalled response after 10 seconds.
+    idleTimeout: 0,
     port: 0,
   });
 
   return { aborted: () => aborted, requests: () => requests, server };
+};
+
+/** Answers every model request with 404, so each download fails as soon as it starts. */
+export const serveMissingModel = () => {
+  let requests = 0;
+
+  const server = Bun.serve({
+    fetch: () => {
+      requests += 1;
+
+      return new Response("not found", { status: 404 });
+    },
+    port: 0,
+  });
+
+  return { requests: () => requests, server };
 };
