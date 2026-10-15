@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { Effect, Stream } from "effect";
+import { Context, Effect, Exit, Layer, Stream } from "effect";
 
 import { KokoroProvider } from "../src/providers/kokoro/index.ts";
 import { isModelInstalled } from "../src/providers/kokoro/model.ts";
@@ -111,6 +111,35 @@ describe("kokoro synthesis", () => {
 
       expect(error._tag).toBe("InvalidVoice");
     }
+  );
+
+  test.skipIf(!isModelInstalled())(
+    "a prepared provider is interrupted once closed",
+    async () => {
+      const exits = await Effect.runPromise(
+        Effect.gen(function* preparedThenClosed() {
+          const [open, context] = yield* Effect.scoped(
+            Effect.gen(function* prepareOpen() {
+              const built = yield* Layer.build(KokoroProvider);
+
+              return [
+                yield* Effect.exit(Context.get(built, Provider).prepare),
+                built,
+              ] as const;
+            })
+          );
+
+          return {
+            closed: yield* Effect.exit(Context.get(context, Provider).prepare),
+            open,
+          };
+        })
+      );
+
+      expect(Exit.isSuccess(exits.open)).toBe(true);
+      expect(Exit.hasInterrupts(exits.closed)).toBe(true);
+    },
+    60_000
   );
 });
 
