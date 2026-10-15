@@ -43,6 +43,7 @@ git clone https://github.com/osmelmora/voix-mcp && cd voix-mcp
 bun install
 bun run build            # → dist/voix-<platform>-<arch> for the current supported host
 # Cross-compile explicitly: bun run build bun-linux-x64
+# Releases add --minify: bun run build --minify
 # Copy the matching executable from dist/ to ~/.local/bin/voix
 ```
 
