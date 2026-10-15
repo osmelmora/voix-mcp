@@ -12,8 +12,8 @@ import {
   SpeakerLive,
   SPEED_MAX,
   SPEED_MIN,
+  validateRequest,
 } from "./core/speaker.ts";
-import { splitSentences, toSpeakable } from "./core/text.ts";
 import { McpLive } from "./mcp.ts";
 import { KokoroProvider } from "./providers/kokoro/index.ts";
 import { KOKORO_MODEL } from "./providers/kokoro/model.ts";
@@ -125,14 +125,26 @@ const say = Command.make(
         return;
       }
 
+      // Reject invalid input before downloading the model or touching the output file.
+      const provider = yield* Provider;
+
+      const request = yield* validateRequest(provider, {
+        speed,
+        text: input,
+        voice,
+      });
+
       yield* prepareWithProgress;
 
       if (Option.isSome(out)) {
-        const provider = yield* Provider;
-        const sentences = splitSentences(toSpeakable(input));
-
-        const chunks = yield* Stream.fromIterable(sentences).pipe(
-          Stream.flatMap((s) => provider.synthesize({ speed, text: s, voice })),
+        const chunks = yield* Stream.fromIterable(request.sentences).pipe(
+          Stream.flatMap((s) =>
+            provider.synthesize({
+              speed: request.speed,
+              text: s,
+              voice: request.voice,
+            })
+          ),
           Stream.runCollect
         );
 

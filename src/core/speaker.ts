@@ -18,7 +18,7 @@ import {
 import { Player } from "../audio/player.ts";
 import { concatPcm } from "../audio/wav.ts";
 import { Provider } from "../providers/provider.ts";
-import type { AudioChunk } from "../providers/provider.ts";
+import type { AudioChunk, ProviderService } from "../providers/provider.ts";
 import type { VoixError } from "./errors.ts";
 import { EmptyText } from "./errors/empty-text.ts";
 import { InvalidSpeed } from "./errors/invalid-speed.ts";
@@ -98,6 +98,59 @@ export interface SpeakerService {
 export class Speaker extends Context.Service<Speaker, SpeakerService>()(
   "voix/Speaker"
 ) {}
+
+/** A request that passed validation, split into the sentences to synthesize. */
+export interface ValidRequest {
+  readonly sentences: readonly string[];
+  readonly voice: string;
+  readonly speed: number;
+}
+
+/**
+ * Apply defaults, check voice, speed and length, and split the text into speakable sentences.
+ * Playback and `say --out` share this so both reject the same input with the same errors.
+ */
+export const validateRequest = (
+  provider: Pick<ProviderService, "defaultVoice" | "voices">,
+  request: Pick<SpeakRequest, "speed" | "text" | "voice">
+): Effect.Effect<
+  ValidRequest,
+  EmptyText | InvalidSpeed | InvalidVoice | TextTooLong
+> =>
+  Effect.gen(function* validateRequestBody() {
+    const voice = request.voice ?? provider.defaultVoice;
+    const speed = request.speed ?? DEFAULT_SPEED;
+
+    if (!provider.voices.some((v) => v.id === voice)) {
+      return yield* new InvalidVoice({
+        available: provider.voices.map((v) => v.id),
+        voice,
+      });
+    }
+
+    if (!Number.isFinite(speed) || speed < SPEED_MIN || speed > SPEED_MAX) {
+      return yield* new InvalidSpeed({
+        max: SPEED_MAX,
+        min: SPEED_MIN,
+        speed,
+      });
+    }
+
+    if (request.text.length > MAX_TEXT_LENGTH) {
+      return yield* new TextTooLong({
+        length: request.text.length,
+        max: MAX_TEXT_LENGTH,
+      });
+    }
+
+    const sentences = splitSentences(toSpeakable(request.text));
+
+    if (sentences.length === 0) {
+      return yield* new EmptyText();
+    }
+
+    return { sentences, speed, voice };
+  });
 
 interface Job {
   readonly id: number;
@@ -251,40 +304,10 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
 
       const enqueue = (request: SpeakRequest) =>
         Effect.gen(function* enqueueJob() {
-          const voice = request.voice ?? provider.defaultVoice;
-          const speed = request.speed ?? DEFAULT_SPEED;
-
-          if (!provider.voices.some((v) => v.id === voice)) {
-            return yield* new InvalidVoice({
-              available: provider.voices.map((v) => v.id),
-              voice,
-            });
-          }
-
-          if (
-            !Number.isFinite(speed) ||
-            speed < SPEED_MIN ||
-            speed > SPEED_MAX
-          ) {
-            return yield* new InvalidSpeed({
-              max: SPEED_MAX,
-              min: SPEED_MIN,
-              speed,
-            });
-          }
-
-          if (request.text.length > MAX_TEXT_LENGTH) {
-            return yield* new TextTooLong({
-              length: request.text.length,
-              max: MAX_TEXT_LENGTH,
-            });
-          }
-
-          const sentences = splitSentences(toSpeakable(request.text));
-
-          if (sentences.length === 0) {
-            return yield* new EmptyText();
-          }
+          const { sentences, speed, voice } = yield* validateRequest(
+            provider,
+            request
+          );
 
           const id = nextId;
           nextId += 1;
