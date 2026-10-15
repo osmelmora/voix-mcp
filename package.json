@@ -16,8 +16,8 @@
     "fix": "ultracite fix"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.0.0",
-    "effect": "4.0.0",
+    "@effect/platform-bun": "4.0.5",
+    "effect": "4.0.5",
     "onnxruntime-node": "1.30.0",
     "phonemizer": "1.2.1"
   },

@@ -46,11 +46,11 @@ Shell ──argv───────▶ voix say ─┤
 
 One process. The MCP stdio server lives for the agent session, so the model stays warm without a daemon. `voix say` is the same core driven from argv.
 
-Implementation style: Effect 4.0.0 throughout. Services are `Context.Service` classes wired with `Layer`, errors are `Schema.TaggedError` classes, synthesis is a `Stream`, `stop` is fiber interruption, playback is a scoped child process that is killed when its scope closes (stop, cancellation, or process exit).
+Implementation style: Effect 4 throughout (4.0.5). Services are `Context.Service` classes wired with `Layer`, errors are `Schema.TaggedError` classes, synthesis is a `Stream`, `stop` is fiber interruption, playback is a scoped child process that is killed when its scope closes (stop, cancellation, or process exit).
 
 ## 3. MCP API
 
-Server: `name: "voix"`, protocol `2025-06-18`, stdio transport, stdout is the wire, diagnostics go to stderr. Server `instructions` tell the agent when to speak and how to write for speech, and point at the `skill://voix/SKILL.md` resource (SEP-2640 pointer pattern; the skills extension itself is not declared because no client consumes it yet and Effect's server cannot serve `skills/list`).
+Server: `name: "voix"`, protocol `2025-06-18`, stdio transport, stdout is the wire, diagnostics go to stderr. When stdin ends, the server finishes the requests it has already read, writes their responses, and exits 0; SIGINT or SIGTERM still exits 130. Server `instructions` tell the agent when to speak and how to write for speech, and point at the `skill://voix/SKILL.md` resource (SEP-2640 pointer pattern; the skills extension itself is not declared because no client consumes it yet and Effect's server cannot serve `skills/list`).
 
 ### `speak`
 
@@ -180,7 +180,7 @@ It is selected by swapping the layer passed to the Speaker; the Speaker, CLI and
 | decision | choice | why |
 | --- | --- | --- |
 | Language/runtime | TypeScript on Bun 1.4.2 (developed and measured on 1.3.9; 1.4.2 verified identically), `bun build --compile` | Single-file executables, cross-compilation, embeds assets. Measured working. |
-| Framework | Effect 4.0.0 (pinned exactly) | Typed errors, fibers for stop/cancel, scoped child processes, built-in MCP server and CLI. +32 KB, +2.5 ms over hello world. |
+| Framework | Effect 4.0.5 (pinned exactly) | Typed errors, fibers for stop/cancel, scoped child processes, built-in MCP server and CLI. +32 KB, +2.5 ms over hello world. |
 | Inference | `onnxruntime-node` 1.30.0 native CPU + `phonemizer` 1.2.1 (eSpeak NG in WASM) + ~150 lines of own Kokoro glue | 2× faster than q8, ~5× real time at fp32. No transformers.js, no sharp. Byte-identical phonemes to kokoro-js. WASM-only path measured slower than real time in Bun. |
 | ONNX runtime library | only the target platform's library is embedded; macOS copies the dylib beside Bun's extracted addon; Linux preloads the embedded `.so` through `bun:ffi` before importing `onnxruntime-node` | macOS resolves `@loader_path`; Linux resolves the preloaded library by SONAME. Bun materializes the Linux library under a user/content-specific temp filename instead of a shared `/tmp/libonnxruntime.so.1`. |
 | Model precision | fp32 `model.onnx`, 326 MB, SHA-256 pinned | best quality and 2.2× faster than q8 on Apple Silicon. One fixed choice. Re-measured 2026-10-15 on ORT 1.30 CPU: fp16 and q4f16 emit whole sentences of NaN; int8 variants (uint8f16 114 MB, q8 92 MB, q8f16 86 MB) were listened to and not adopted; q8 is still ~2.2× slower. |
@@ -280,7 +280,7 @@ voix-mcp/
 - Process regression tests: `install.test.ts` runs the real shell installer with isolated `uname`, `getconf`, and `curl` commands, including musl rejection. `player.test.ts` drives real child processes through `fixtures/play.ts` and fake player executables to verify startup checks, remembered-backend reuse, failure fallback, late installation, cancellation, and WAV cleanup. `cli.test.ts` checks Linux CLI failure exit codes with a cached model, and that `say --out` rejects invalid speed, voice, overlong and unspeakable text without a model and without creating or changing the output file; `mcp.test.ts` verifies missing players and failed startup checks return typed tool errors over stdio. Failures after real-audio startup are logged asynchronously unless `wait` is true, in which case they return as tool errors. A waited `speak` with a `progressToken` receives increasing `notifications/progress`. `runtime.test.ts` verifies through native `getenv` that the real loader overrides a telemetry opt-in; its child also uses CI suppression to avoid emitting telemetry if the test regresses.
 - Release tests: `release.test.ts` table-tests the decisions in `scripts/release-core.ts`: planning inputs and cog output, release state, rejected pushes, tag checks, the latest release, and when `main` moved, published releases, successor runs, and retries with an injected sleep. It also runs `scripts/release.ts` against throwaway repositories with a local bare origin, real git and cog, and a fake `gh`: planning, a full release, a re-run that resumes from another directory, a push raced by `main`, a rejected push, a lost push response, and failed or missing commands.
 - Integration: Kokoro synthesis and the MCP stdio round trip run only when the model is present in the cache (skipped with a message otherwise); playback is disabled with `VOIX_PLAYER=none` so CI is silent.
-- Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client, with stdin kept open until the response arrives (Effect's stdio layer drops in-flight responses on EOF).
+- Smoke: `voix say "Hello"` and the compiled binary's `mcp` command driven by a raw JSON-RPC client. The client closes stdin to shut the server down and expects exit 0. A one-shot client writes `initialize`, `tools/list`, and a waited `speak`, closes stdin at once, and must get every response before a clean exit.
 - Compiled distribution: `bun run scripts/smoke.ts <binary>` runs a copy from outside the checkout, checks `status`, prepares the model with a separate ten-minute deadline, and verifies headless synthesis produces a nonempty mono 24 kHz PCM WAV within three minutes. Both platforms run with a fresh `TMPDIR` and with temp environment variables unset to exercise the `/tmp` fallback. CI caches model files by platform and model-source hash; only a cold cache needs the Hugging Face download. CI runs lint, format, types, the smoke test, and the suite against the compiled MCP server on both platforms for pull requests and pushes alike; a release publishes the binaries that run built and tested.
 - Manual: the owner hears `voix say` once; no automated test asserts audible output.
 
@@ -288,8 +288,8 @@ voix-mcp/
 
 - Intel Mac: onnxruntime-node 1.30 ships no darwin-x64 binary.
 - Linux arm64, Windows, and musl: unsupported build targets; Linux x64 is covered by native CI.
-- `effect/ai`, `effect/cli`, `effect/process` are marked unstable; pinned to 4.0.0.
-- Effect issue #8710 (stdio drops in-flight responses on stdin close) affects one-shot pipelines only.
+- `effect/ai`, `effect/cli`, `effect/process` are marked unstable; pinned to 4.0.5.
+- Effect's stdio server still ends by interrupting the fiber that built it after stdin EOF (effect PR #8714 fixed the dropped responses, not the exit status). `serveMcp` builds it in a child fiber so that interrupt exits 0.
 - Bun minifier incident with Effect (effect-smol #2126): CI builds and releases with `--minify` because the compiled smoke test, the binary test suite, and byte-identical WAV and error output pass with it on Bun 1.4.2 and Effect 4.0.0 ([issue #21](https://github.com/osmelmora/voix-mcp/issues/21)). It saves about 2.5 MB (2%) and 5 ms of startup. Recheck before bumping Bun or Effect; drop the flag if they regress.
 - A standalone Bun in `~/.bun/bin` ahead of mise on PATH shadows the pinned version; `scripts/build.ts` spawns `process.execPath` so the embedded runtime still matches whatever Bun ran the build.
 - Cancelling a waited `speak` while audio is already playing stops that utterance. Leaving it playing and detaching the waiter is unresolved.
