@@ -94,7 +94,9 @@ jobs:
         env:
           VERSION: ${{ needs.plan.outputs.version }}
         run: bun pm version "$VERSION" --no-git-tag-version --allow-same-version
-      - run: bun run build bun-${{ matrix.target }}
+      # Minified like the release: the smoke test and the binary tests below run
+      # against the exact executable that is uploaded and published.
+      - run: bun run build bun-${{ matrix.target }} --minify
       - run: bun run scripts/smoke.ts ./dist/voix-${{ matrix.target }}
       - run: VOIX_PLAYER=none VOIX_BIN=./dist/voix-${{ matrix.target }} bun test
       - if: needs.plan.outputs.version != ''

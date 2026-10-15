@@ -202,7 +202,7 @@ User downloads one file: `voix-darwin-arm64` or `voix-linux-x64`. Each embeds Bu
 | macOS Apple Silicon | `bun-darwin-arm64` | `/usr/bin/afplay` |
 | Linux x64, glibc | `bun-linux-x64` | `pw-play`, then `paplay`, then `aplay` on PATH |
 
-`bun run build` defaults to the current supported host; pass a target explicitly to cross-compile. Unsupported targets fail before building. The installer maps `Darwin arm64` and `Linux x86_64` to the matching asset and requires `getconf GNU_LIBC_VERSION` to identify glibc on Linux; it rejects musl before downloading. Linux users need a working audio session and its player package for playback; `say --out` also works headlessly with no player.
+`bun run build` defaults to the current supported host; pass a target explicitly to cross-compile. CI adds `--minify`, so released binaries are minified; local builds are not unless asked. Unsupported targets fail before building. The installer maps `Darwin arm64` and `Linux x86_64` to the matching asset and requires `getconf GNU_LIBC_VERSION` to identify glibc on Linux; it rejects musl before downloading. Linux users need a working audio session and its player package for playback; `say --out` also works headlessly with no player.
 
 Implementation note for [issue #3](https://github.com/osmelmora/voix-mcp/issues/3): Linux intentionally uses Bun's user/content-specific extraction plus FFI preloading instead of copying a fixed `libonnxruntime.so.1` into shared `/tmp`. `status` labels the virtual asset as embedded; its physical filename is managed by Bun. The conditional asset imports must remain statically distinguishable so cross-compilation embeds only the selected platform's library.
 
@@ -288,7 +288,7 @@ voix-mcp/
 - Linux arm64, Windows, and musl: unsupported build targets; Linux x64 is covered by native CI.
 - `effect/ai`, `effect/cli`, `effect/process` are marked unstable; pinned to 4.0.0.
 - Effect issue #8710 (stdio drops in-flight responses on stdin close) affects one-shot pipelines only.
-- Bun minifier incident with Effect (effect-smol #2126): build without `--minify` unless the compiled smoke test passes with it.
+- Bun minifier incident with Effect (effect-smol #2126): CI builds and releases with `--minify` because the compiled smoke test, the binary test suite, and byte-identical WAV and error output pass with it on Bun 1.4.2 and Effect 4.0.0 ([issue #21](https://github.com/osmelmora/voix-mcp/issues/21)). It saves about 2.5 MB (2%) and 5 ms of startup. Recheck before bumping Bun or Effect; drop the flag if they regress.
 - A standalone Bun in `~/.bun/bin` ahead of mise on PATH shadows the pinned version; `scripts/build.ts` spawns `process.execPath` so the embedded runtime still matches whatever Bun ran the build.
 - Cancelling a waited `speak` while audio is already playing stops that utterance. Leaving it playing and detaching the waiter is unresolved.
 
