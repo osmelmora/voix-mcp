@@ -1,4 +1,13 @@
-import { Deferred, Effect, Exit, Layer, Option, Ref, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Ref,
+  Stream,
+} from "effect";
 import type { InferenceSession } from "onnxruntime-node";
 
 import type { PrepareError } from "../../core/errors.ts";
@@ -88,12 +97,17 @@ export const KokoroProvider: Layer.Layer<Provider> = Layer.effect(
     // Memoized: the first caller starts the work in a fiber owned by the provider's scope, so an interrupted
     // caller (a cancelled tool call) does not strand later callers, and shutdown interrupts and joins it.
     // Publishing the slot and starting its owner are one uninterruptible step: a caller interrupted in between
-    // would leave a slot nothing ever settles. Only the wait is interruptible. The owner starts immediately so
-    // its exit handler is installed even when the scope is already closed; then it is interrupted at once and
-    // callers fail fast instead of waiting. Failures and interruptions reset so a retry can happen.
+    // would leave a slot nothing ever settles. Only the wait is interruptible. A closed provider interrupts every
+    // caller, even after a successful preparation. The owner starts immediately so its exit handler is installed
+    // even when the scope closes while it starts; then it is interrupted at once and callers fail fast instead of
+    // waiting. Failures and interruptions reset so a retry can happen.
     const prepare: Effect.Effect<void, PrepareError> =
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* prepareBody() {
+          if (Predicate.isTagged(scope.state, "Closed")) {
+            return yield* Effect.interrupt;
+          }
+
           // Effect's Deferred.make accepts void as its success type.
           // oxlint-disable-next-line typescript/no-invalid-void-type
           const fresh = yield* Deferred.make<void, PrepareError>();
