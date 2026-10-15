@@ -1,4 +1,14 @@
-import { Console, Effect, Layer, Logger, Option, Schema } from "effect";
+import {
+  Cause,
+  Console,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Logger,
+  Option,
+  Schema,
+} from "effect";
 import type { Stdio } from "effect";
 import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
@@ -189,4 +199,19 @@ export const McpLive: Layer.Layer<
   ),
   // stdout is the MCP wire; every log line must go to stderr
   Layer.provide(Layer.succeed(Logger.LogToStderr, true))
+);
+
+/**
+ * Serve MCP until stdin ends. After EOF, layerStdio writes every pending response and then
+ * interrupts the fiber that built it, so build it in a child: that interrupt means a clean
+ * shutdown and exits 0, while a signal still interrupts the parent and exits 130.
+ */
+export const serveMcp = Layer.launch(McpLive).pipe(
+  Effect.forkChild,
+  Effect.flatMap(Fiber.await),
+  Effect.flatMap((exit) =>
+    Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+      ? Effect.failCause(exit.cause)
+      : Effect.void
+  )
 );

@@ -14,7 +14,7 @@ import {
   SPEED_MIN,
 } from "./core/speaker.ts";
 import { splitSentences, toSpeakable } from "./core/text.ts";
-import { McpLive } from "./mcp.ts";
+import { serveMcp } from "./mcp.ts";
 import { KokoroProvider } from "./providers/kokoro/index.ts";
 import { KOKORO_MODEL } from "./providers/kokoro/model.ts";
 import {
@@ -195,7 +195,7 @@ const status = Command.make("status", {}, () =>
   })
 ).pipe(Command.withDescription("Show installation state"));
 
-const mcp = Command.make("mcp", {}, () => Layer.launch(McpLive)).pipe(
+const mcp = Command.make("mcp", {}, () => serveMcp).pipe(
   Command.withDescription("Run the MCP server over stdio")
 );
 

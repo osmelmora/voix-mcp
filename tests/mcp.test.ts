@@ -129,11 +129,46 @@ class StdioClient {
     this.send({ jsonrpc: "2.0", method, params: params ?? {} });
   }
 
+  /** Close stdin like a client that is done, and return the exit code. */
   async stop() {
-    this.proc?.kill();
-    await this.proc?.exited;
+    const { proc } = this;
+
+    if (proc === undefined) {
+      throw new Error("MCP client has not started");
+    }
+
+    proc.stdin.end();
+    // Kill a server that ignores EOF so the caller's exit-code assertion fails instead of hanging.
+    const timer = setTimeout(() => proc.kill(), 10_000);
+    const code = await proc.exited;
+    clearTimeout(timer);
+
+    return code;
   }
 }
+
+/** Write every frame, close stdin at once, and collect what the server prints before it exits. */
+const runOneShot = async (frames: readonly JsonRpcRequest[]) => {
+  const proc = Bun.spawn([...cliCommand(), "mcp"], {
+    env: { ...process.env, VOIX_PLAYER: "none" },
+    stderr: "pipe",
+    stdin: new Blob(frames.map((frame) => `${JSON.stringify(frame)}\n`)),
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  const messages: any[] = stdout
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
+
+  return { code, messages, stderr };
+};
 
 /** Run a fresh MCP server whose PATH holds only the fake players `install` creates. */
 const withFakePlayers = async (
@@ -148,7 +183,7 @@ const withFakePlayers = async (
     await client.initialize({ PATH: shell.directory, VOIX_PLAYER: "" });
     await body(client);
   } finally {
-    await client.stop();
+    expect(await client.stop()).toBe(0);
   }
 };
 
@@ -175,7 +210,9 @@ describeMcp("voix mcp (stdio)", () => {
     expect(init.result.instructions).toContain("wait: true");
   });
 
-  afterAll(() => client.stop());
+  afterAll(async () => {
+    expect(await client.stop()).toBe(0);
+  });
 
   test("lists speak and stop", async () => {
     const res = await client.request("tools/list");
@@ -251,6 +288,41 @@ describeMcp("voix mcp (stdio)", () => {
 
     expect(res.error?.code).toBe(-32_602);
   });
+
+  test("a one-shot client gets every response and a clean exit after EOF", async () => {
+    const { code, messages, stderr } = await runOneShot([
+      {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          capabilities: {},
+          clientInfo: { name: "voix-one-shot", version: "0" },
+          protocolVersion: "2025-06-18",
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized", params: {} },
+      { id: 2, jsonrpc: "2.0", method: "tools/list", params: {} },
+      // Still synthesizing when stdin closes.
+      {
+        id: 3,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { arguments: { text: "Hello.", wait: true }, name: "speak" },
+      },
+    ]);
+
+    expect(code, stderr).toBe(0);
+
+    const byId = new Map(
+      messages.filter((msg) => msg.id !== undefined).map((msg) => [msg.id, msg])
+    );
+
+    expect([...byId.keys()].toSorted()).toEqual([1, 2, 3]);
+    expect(byId.get(1).result.serverInfo.name).toBe("voix");
+    expect(byId.get(2).result.tools).toHaveLength(2);
+    expect(byId.get(3).result.structuredContent.status).toBe("finished");
+  }, 90_000);
 
   test("wait returns finished and speaking false", async () => {
     const res = await client.request("tools/call", {
