@@ -25,6 +25,15 @@ describe("kokoro phonemizer", () => {
     expect(tokenize(ps).length).toBe(55);
   });
 
+  test("etc. inside a sentence loses its period, unlike kokoro-js", async () => {
+    const ps = await Effect.runPromise(
+      phonemize("Apples, pears, etc. are fine.", "en-US")
+    );
+
+    // kokoro-js 1.2.1 gives "ˈæpəlz, pˈɛɹz, ɛtsˈɛtɹə. ɑːɹ fˈaɪn." (see docs/SPEC.md §5)
+    expect(ps).toBe("ˈæpəlz, pˈɛɹz, ɛtsˈɛtɹə ɑːɹ fˈaɪn.");
+  });
+
   test("tokens are padded with 0 and capped", () => {
     const ids = tokenize("a".repeat(600));
     expect(ids[0]).toBe(0);

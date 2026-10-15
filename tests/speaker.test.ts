@@ -12,7 +12,8 @@ const RATE = 100;
 
 /**
  * Fake provider: each sentence takes `synthMs` and yields one chunk whose length encodes the sentence.
- * A sentence starting with "Fail" fails synthesis instead.
+ * A sentence starting with "Fail" fails synthesis instead; one that says nothing yields no chunk,
+ * as Kokoro does for empty phonemes.
  */
 const FakeProvider = (synthMs: number) =>
   Layer.succeed(Provider, {
@@ -37,6 +38,10 @@ const FakeProvider = (synthMs: number) =>
                   text,
                 })
           )
+        )
+      ).pipe(
+        Stream.filter(() =>
+          /(?!\p{Default_Ignorable_Code_Point})[\p{L}\p{N}]/u.test(text)
         )
       ),
     voices: [{ gender: "female", id: "v1", language: "en-US", name: "One" }],
@@ -115,6 +120,34 @@ describe("Speaker", () => {
         );
         // later sentences were batched while the first played
         expect(played.length).toBeLessThan(4);
+      })
+    );
+  });
+
+  test("an invisible first line does not let the first sentence grow", async () => {
+    const text = `\u200B\nDr. Smith ${"reviewed the report ".repeat(15)}today.`;
+
+    await run(20, 60, (speaker, played) =>
+      Effect.gen(function* invisible() {
+        yield* speaker.speak({ text });
+        // the first audio is the short "Dr." alone, not a 300 character sentence
+        expect(played[0]?.samples).toBe("Dr.".length);
+        yield* speaker.stop;
+      })
+    );
+  });
+
+  test("a silent first line does not let the first sentence grow", async () => {
+    const long = `Dr. Smith ${"reviewed the report ".repeat(15)}today.`;
+
+    await run(20, 60, (speaker, played) =>
+      Effect.gen(function* silent() {
+        // a Hangul filler is a letter that says nothing; an em dash alone says nothing too
+        for (const lead of ["\u115F\u3164", "—"]) {
+          yield* speaker.speak({ text: `${lead}\n${long}` });
+          expect(played.at(-1)?.samples).toBe("Dr.".length);
+          yield* speaker.stop;
+        }
       })
     );
   });
