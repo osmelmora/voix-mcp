@@ -16,6 +16,10 @@ export const KOKORO_MODEL = {
   version: "v1.0",
 } as const;
 
+/** Where the model is fetched from. Override with VOIX_MODEL_URL (a mirror, or a test server); the pinned SHA-256 still applies. */
+export const modelUrl = (): string =>
+  process.env.VOIX_MODEL_URL ?? KOKORO_MODEL.url;
+
 export const modelDir = (): string =>
   path.join(modelsDir(), `kokoro-${KOKORO_MODEL.version}`);
 
@@ -39,8 +43,9 @@ export const downloadModel = (
     const target = modelPath();
     const part = `${target}.part`;
 
-    const fail = (reason: string) =>
-      new DownloadFailed({ reason, url: KOKORO_MODEL.url });
+    const url = modelUrl();
+
+    const fail = (reason: string) => new DownloadFailed({ reason, url });
 
     yield* Effect.try({
       catch: (e) => fail(String(e)),
@@ -53,7 +58,7 @@ export const downloadModel = (
 
     const response = yield* Effect.tryPromise({
       catch: (e) => fail(e instanceof Error ? e.message : String(e)),
-      try: (signal) => fetch(KOKORO_MODEL.url, { redirect: "follow", signal }),
+      try: (signal) => fetch(url, { redirect: "follow", signal }),
     });
 
     const { body } = response;
