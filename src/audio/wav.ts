@@ -63,6 +63,23 @@ export const concatPcm = (chunks: readonly Float32Array[]): Float32Array => {
   return out;
 };
 
+/** Count NaN and infinite samples. A model can emit them; encoding would turn them into silence. */
+export const countNonFinite = (pcm: Float32Array): number => {
+  let count = 0;
+
+  // Indexed: for…of over a typed array measured about 10× slower here.
+  // oxlint-disable-next-line typescript/prefer-for-of
+  for (let i = 0; i < pcm.length; i += 1) {
+    // The loop bounds guarantee this sample exists.
+    // oxlint-disable-next-line typescript/no-non-null-assertion
+    if (!Number.isFinite(pcm[i]!)) {
+      count += 1;
+    }
+  }
+
+  return count;
+};
+
 export const durationSeconds = (
   pcm: Float32Array,
   sampleRate: number

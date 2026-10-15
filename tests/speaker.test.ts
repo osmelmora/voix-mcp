@@ -3,8 +3,13 @@ import { describe, expect, test } from "bun:test";
 import { Effect, Fiber, Layer, Option, Stream } from "effect";
 
 import { Player } from "../src/audio/player.ts";
+import { encodeWav } from "../src/audio/wav.ts";
 import { SynthFailed } from "../src/core/errors/synth-failed.ts";
-import { Speaker, SpeakerLive } from "../src/core/speaker.ts";
+import {
+  Speaker,
+  SpeakerLive,
+  synthesizeSentences,
+} from "../src/core/speaker.ts";
 import { Provider } from "../src/providers/provider.ts";
 import type { AudioChunk } from "../src/providers/provider.ts";
 
@@ -12,7 +17,8 @@ const RATE = 100;
 
 /**
  * Fake provider: each sentence takes `synthMs` and yields one chunk whose length encodes the sentence.
- * A sentence starting with "Fail" fails synthesis instead.
+ * A sentence starting with "Fail" fails synthesis instead; one starting with "NaN" or "Inf" yields a
+ * chunk with one such sample in the middle, as a broken model would.
  */
 const FakeProvider = (synthMs: number) =>
   Layer.succeed(Provider, {
@@ -31,10 +37,16 @@ const FakeProvider = (synthMs: number) =>
           Effect.andThen(
             text.startsWith("Fail")
               ? Effect.fail(new SynthFailed({ reason: "synthesis failed" }))
-              : Effect.succeed<AudioChunk>({
-                  pcm: new Float32Array(text.length),
-                  sampleRate: RATE,
-                  text,
+              : Effect.sync((): AudioChunk => {
+                  const pcm = new Float32Array(text.length).fill(0.25);
+
+                  if (text.startsWith("NaN")) {
+                    pcm[1] = Number.NaN;
+                  } else if (text.startsWith("Inf")) {
+                    pcm[1] = -Infinity;
+                  }
+
+                  return { pcm, sampleRate: RATE, text };
                 })
           )
         )
@@ -92,6 +104,59 @@ const run = <A, E>(
     }).pipe(Effect.provide(layer), Effect.scoped)
   );
 };
+
+const collectSentences = (sentences: readonly string[]) =>
+  Effect.gen(function* collectGuarded() {
+    const provider = yield* Provider;
+
+    return yield* Stream.runCollect(
+      synthesizeSentences(provider, sentences, "v1", 1)
+    );
+  }).pipe(Effect.provide(FakeProvider(0)));
+
+const collectDirect = (sentences: readonly string[]) =>
+  Effect.gen(function* collectUnguarded() {
+    const provider = yield* Provider;
+
+    return yield* Stream.runCollect(
+      Stream.fromIterable(sentences).pipe(
+        Stream.flatMap((text) =>
+          provider.synthesize({ speed: 1, text, voice: "v1" })
+        )
+      )
+    );
+  }).pipe(Effect.provide(FakeProvider(0)));
+
+const wavs = (chunks: readonly AudioChunk[]) =>
+  chunks.map((c) => encodeWav(c.pcm, c.sampleRate));
+
+describe("synthesizeSentences", () => {
+  test("passes finite audio through unchanged", async () => {
+    const sentences = ["One.", "Three."];
+    const guarded = await Effect.runPromise(collectSentences(sentences));
+    const direct = await Effect.runPromise(collectDirect(sentences));
+
+    expect(guarded.map((c) => c.text)).toEqual(sentences);
+    expect(wavs(guarded)).toEqual(wavs(direct));
+  });
+
+  test("fails with SynthFailed on NaN or infinite samples", async () => {
+    const errors = await Promise.all(
+      ["NaN here.", "Inf here."].map((bad) =>
+        Effect.runPromise(
+          Effect.flip(collectSentences(["Fine.", bad, "Never."]))
+        )
+      )
+    );
+
+    expect(errors.map((e) => [e._tag, e.message])).toEqual(
+      ["NaN here.", "Inf here."].map((bad) => [
+        "SynthFailed",
+        `Speech synthesis failed: sentence 2 of 3 produced 1 of ${bad.length} samples as NaN or infinity`,
+      ])
+    );
+  });
+});
 
 describe("Speaker", () => {
   test("returns once the first sentence starts and batches the rest", async () => {
@@ -356,6 +421,31 @@ describe("Speaker", () => {
           voice: "v1",
         });
         yield* speaker.awaitIdle;
+      })
+    );
+  });
+
+  test("non-finite audio in the first sentence fails speak before playback", async () => {
+    await run(5, 20, (speaker, played) =>
+      Effect.gen(function* nanBeforeAudio() {
+        const error = yield* Effect.flip(speaker.speak({ text: "NaN. Two." }));
+        expect(error._tag).toBe("SynthFailed");
+        expect(error.message).toContain("sentence 1 of 2");
+        expect(played).toHaveLength(0);
+      })
+    );
+  });
+
+  test("wait surfaces non-finite audio after playback started without playing it", async () => {
+    await run(5, 20, (speaker, played) =>
+      Effect.gen(function* nanAfterAudio() {
+        const error = yield* Effect.flip(
+          speaker.speak({ text: "One. Inf. Three.", wait: true })
+        );
+
+        expect(error._tag).toBe("SynthFailed");
+        expect(error.message).toContain("sentence 2 of 3");
+        expect(played.map((chunk) => chunk.samples)).toEqual(["One.".length]);
       })
     );
   });

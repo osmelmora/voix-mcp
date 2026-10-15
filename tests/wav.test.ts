@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { concatPcm, encodeWav } from "../src/audio/wav.ts";
+import { concatPcm, countNonFinite, encodeWav } from "../src/audio/wav.ts";
 
 test("encodeWav writes a valid 16-bit mono header", () => {
   const pcm = new Float32Array([0, 0.5, -0.5, 1, -1]);
@@ -19,4 +19,13 @@ test("encodeWav writes a valid 16-bit mono header", () => {
 test("concatPcm joins chunks in order", () => {
   const out = concatPcm([new Float32Array([1, 2]), new Float32Array([3])]);
   expect([...out]).toEqual([1, 2, 3]);
+});
+
+test("countNonFinite counts NaN and infinite samples", () => {
+  expect(countNonFinite(new Float32Array([0, 0.5, -1, 1]))).toBe(0);
+  expect(countNonFinite(new Float32Array(0))).toBe(0);
+  expect(
+    countNonFinite(new Float32Array([0, Number.NaN, Infinity, -Infinity, 0.25]))
+  ).toBe(3);
+  expect(countNonFinite(new Float32Array(10).fill(Number.NaN))).toBe(10);
 });

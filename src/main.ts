@@ -12,6 +12,7 @@ import {
   SpeakerLive,
   SPEED_MAX,
   SPEED_MIN,
+  synthesizeSentences,
   validateRequest,
 } from "./core/speaker.ts";
 import { McpLive } from "./mcp.ts";
@@ -137,15 +138,14 @@ const say = Command.make(
       yield* prepareWithProgress;
 
       if (Option.isSome(out)) {
-        const chunks = yield* Stream.fromIterable(request.sentences).pipe(
-          Stream.flatMap((s) =>
-            provider.synthesize({
-              speed: request.speed,
-              text: s,
-              voice: request.voice,
-            })
-          ),
-          Stream.runCollect
+        // Collected before writing, so failed synthesis leaves no file behind.
+        const chunks = yield* Stream.runCollect(
+          synthesizeSentences(
+            provider,
+            request.sentences,
+            request.voice,
+            request.speed
+          )
         );
 
         const pcm = concatPcm(chunks.map((c) => c.pcm));

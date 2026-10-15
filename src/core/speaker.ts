@@ -16,9 +16,13 @@ import {
 } from "effect";
 
 import { Player } from "../audio/player.ts";
-import { concatPcm } from "../audio/wav.ts";
+import { concatPcm, countNonFinite } from "../audio/wav.ts";
 import { Provider } from "../providers/provider.ts";
-import type { AudioChunk, ProviderService } from "../providers/provider.ts";
+import type {
+  AudioChunk,
+  ProviderService,
+  SynthError,
+} from "../providers/provider.ts";
 import type { VoixError } from "./errors.ts";
 import { EmptyText } from "./errors/empty-text.ts";
 import { InvalidSpeed } from "./errors/invalid-speed.ts";
@@ -36,6 +40,34 @@ export const DEFAULT_SPEED = 1;
 
 /** How long `speak` waits for playback to start before giving up with ModelDownloading. */
 export const FIRST_AUDIO_TIMEOUT = "45 seconds";
+
+/**
+ * Synthesize sentences in order. A chunk with any NaN or infinite sample fails with SynthFailed
+ * before it reaches a player or a WAV file, where it would otherwise become silence.
+ */
+export const synthesizeSentences = (
+  provider: ProviderService,
+  sentences: readonly string[],
+  voice: string,
+  speed: number
+): Stream.Stream<AudioChunk, SynthError> =>
+  Stream.fromIterable(sentences.entries()).pipe(
+    Stream.flatMap(([index, text]) =>
+      provider.synthesize({ speed, text, voice }).pipe(
+        Stream.mapEffect((chunk) => {
+          const bad = countNonFinite(chunk.pcm);
+
+          return bad === 0
+            ? Effect.succeed(chunk)
+            : Effect.fail(
+                new SynthFailed({
+                  reason: `sentence ${index + 1} of ${sentences.length} produced ${bad} of ${chunk.pcm.length} samples as NaN or infinity`,
+                })
+              );
+        })
+      )
+    )
+  );
 
 export interface SpeakRequest {
   readonly text: string;
@@ -202,10 +234,12 @@ export const SpeakerLive: Layer.Layer<Speaker, never, Provider | Player> =
 
           const messages = yield* Queue.unbounded<Message>();
 
-          const producer = Stream.fromIterable(job.sentences).pipe(
-            Stream.flatMap((text) =>
-              provider.synthesize({ speed: job.speed, text, voice: job.voice })
-            ),
+          const producer = synthesizeSentences(
+            provider,
+            job.sentences,
+            job.voice,
+            job.speed
+          ).pipe(
             Stream.runForEach((chunk) =>
               Queue.offer(messages, Messages.chunk({ chunk }))
             ),
