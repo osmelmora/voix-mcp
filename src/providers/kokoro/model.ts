@@ -36,26 +36,51 @@ const PROGRESS_STEP = 2 * 1024 * 1024;
 
 const FLUSH_STEP = 16 * 1024 * 1024;
 
-export const downloadModel = (
-  onProgress: (received: number, total: number) => Effect.Effect<void>
-): Effect.Effect<void, DownloadFailed | ChecksumMismatch> =>
-  Effect.gen(function* download() {
-    const target = modelPath();
-    const part = `${target}.part`;
+/** A download's temp file this old was left by a crashed attempt: a live one is written to far more often. */
+const STALE_TEMP_MS = 24 * 60 * 60 * 1000;
 
-    const url = modelUrl();
+const isTempFile = (name: string) =>
+  name.startsWith("model.onnx.") && name.endsWith(".part");
 
-    const fail = (reason: string) => new DownloadFailed({ reason, url });
+/** Best effort: removes temp files that crashed attempts left behind, never a recent one a live peer may own. */
+const removeStaleTempFiles = (dir: string) =>
+  Effect.try({
+    catch: (e) => e,
+    try: () => {
+      for (const name of fs.readdirSync(dir).filter(isTempFile)) {
+        const file = path.join(dir, name);
+        const stat = fs.statSync(file, { throwIfNoEntry: false });
 
-    yield* Effect.try({
-      catch: (e) => fail(String(e)),
-      try: () => fs.mkdirSync(modelDir(), { recursive: true }),
-    });
-    yield* Effect.try({
-      catch: (e) => fail(String(e)),
-      try: () => fs.rmSync(part, { force: true }),
-    });
+        if (stat !== undefined && Date.now() - stat.mtimeMs > STALE_TEMP_MS) {
+          fs.rmSync(file, { force: true });
+        }
+      }
+    },
+  }).pipe(Effect.ignore);
 
+/** What a download must match before it is published. */
+export interface ExpectedModel {
+  readonly sha256: string;
+  readonly size: number;
+}
+
+/** Fetches the model into `part`, verifies it, and only then renames exactly that file to `target`. */
+const receive = ({
+  expected,
+  fail,
+  onProgress,
+  part,
+  target,
+  url,
+}: {
+  readonly expected: ExpectedModel;
+  readonly fail: (reason: string) => DownloadFailed;
+  readonly onProgress: (received: number, total: number) => Effect.Effect<void>;
+  readonly part: string;
+  readonly target: string;
+  readonly url: string;
+}): Effect.Effect<void, DownloadFailed | ChecksumMismatch> =>
+  Effect.gen(function* receiveBody() {
     const response = yield* Effect.tryPromise({
       catch: (e) => fail(e instanceof Error ? e.message : String(e)),
       try: (signal) => fetch(url, { redirect: "follow", signal }),
@@ -68,7 +93,7 @@ export const downloadModel = (
     }
 
     const total =
-      Number(response.headers.get("content-length")) || KOKORO_MODEL.size;
+      Number(response.headers.get("content-length")) || expected.size;
 
     const hasher = new Bun.CryptoHasher("sha256");
     const writer = Bun.file(part).writer();
@@ -104,12 +129,10 @@ export const downloadModel = (
 
     const actual = hasher.digest("hex");
 
-    if (actual !== KOKORO_MODEL.sha256) {
-      fs.rmSync(part, { force: true });
-
+    if (actual !== expected.sha256) {
       return yield* new ChecksumMismatch({
         actual,
-        expected: KOKORO_MODEL.sha256,
+        expected: expected.sha256,
         path: target,
       });
     }
@@ -118,4 +141,34 @@ export const downloadModel = (
       catch: (e) => fail(String(e)),
       try: () => fs.renameSync(part, target),
     });
+  });
+
+export const downloadModel = (
+  onProgress: (received: number, total: number) => Effect.Effect<void>,
+  expected: ExpectedModel = KOKORO_MODEL
+): Effect.Effect<void, DownloadFailed | ChecksumMismatch> =>
+  Effect.gen(function* download() {
+    const target = modelPath();
+    // Each attempt writes its own file, in the model's directory so the final rename stays atomic: concurrent
+    // downloads (two processes on a cold cache) never write into, publish, or delete each other's file.
+    const part = `${target}.${process.pid}-${crypto.randomUUID()}.part`;
+
+    const url = modelUrl();
+
+    const fail = (reason: string) => new DownloadFailed({ reason, url });
+
+    yield* Effect.try({
+      catch: (e) => fail(String(e)),
+      try: () => fs.mkdirSync(modelDir(), { recursive: true }),
+    });
+    yield* removeStaleTempFiles(modelDir());
+
+    yield* receive({ expected, fail, onProgress, part, target, url }).pipe(
+      Effect.ensuring(
+        Effect.try({
+          catch: (e) => e,
+          try: () => fs.rmSync(part, { force: true }),
+        }).pipe(Effect.ignore)
+      )
+    );
   });
