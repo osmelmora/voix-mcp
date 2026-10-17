@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.1 - 2026-10-17
+#### Bug Fixes
+- (**cli**) validate say --out like playback - (21b703a) - Osmel Mora, *Claude Opus 5.5*
+#### Build system
+- minify release binaries - (05c56c3) - Osmel Mora, *Claude Opus 5.5*
+
+- - -
+
 ## v0.3.0 - 2026-10-08
 #### Features
 - (**mcp**) optional wait on speak plus speaking status (#28) - (f8bcbb9) - Osmel Mora, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Osmel Mora*, *Cursor Agent*, *Osmel Mora*
