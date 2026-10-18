@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.3 - 2026-10-18
+#### Bug Fixes
+- (**text**) keep abbreviations inside their sentence - (927be74) - Osmel Mora, *Claude Opus 5.5*
+
+- - -
+
 ## v0.3.2 - 2026-10-18
 #### Bug Fixes
 - (**speaker**) fail synthesis on non-finite audio instead of playing silence - (2e50d9d) - Osmel Mora, *Claude Opus 5.5*
