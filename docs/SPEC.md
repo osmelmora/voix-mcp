@@ -291,7 +291,7 @@ voix-mcp/
 - Linux arm64, Windows, and musl: unsupported build targets; Linux x64 is covered by native CI.
 - `effect/ai`, `effect/cli`, `effect/process` are marked unstable; pinned to 4.0.5.
 - Effect's stdio server still ends by interrupting the fiber that built it after stdin EOF (effect PR #8714 fixed the dropped responses, not the exit status). `serveMcp` builds it in a child fiber so that interrupt exits 0.
-- Bun minifier incident with Effect (effect-smol #2126): CI builds and releases with `--minify` because the compiled smoke test, the binary test suite, and byte-identical WAV and error output pass with it on Bun 1.4.2 and Effect 4.0.0 ([issue #21](https://github.com/osmelmora/voix-mcp/issues/21)). It saves about 2.5 MB (2%) and 5 ms of startup. Recheck before bumping Bun or Effect; drop the flag if they regress.
+- Bun minifier incident with Effect (effect-smol #2126): CI builds and releases with `--minify` because the compiled smoke test, the binary test suite, and byte-identical WAV and error output pass with it on Bun 1.4.2 with Effect 4.0.0 and again with 4.0.5 ([issue #21](https://github.com/osmelmora/voix-mcp/issues/21)). It saves about 2.5 MB (2%) and 5 ms of startup. Recheck before bumping Bun or Effect; drop the flag if they regress.
 - A standalone Bun in `~/.bun/bin` ahead of mise on PATH shadows the pinned version; `scripts/build.ts` spawns `process.execPath` so the embedded runtime still matches whatever Bun ran the build.
 - Cancelling a waited `speak` while audio is already playing stops that utterance. Leaving it playing and detaching the waiter is unresolved.
 
