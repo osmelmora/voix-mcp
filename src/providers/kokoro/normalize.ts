@@ -89,7 +89,10 @@ export const normalizeText = (t: string): string =>
     .replaceAll(/\b(?:Mr\.|MR\.(?= [A-Z]))/gu, "Mister")
     .replaceAll(/\b(?:Ms\.|MS\.(?= [A-Z]))/gu, "Miss")
     .replaceAll(/\b(?:Mrs\.|MRS\.(?= [A-Z]))/gu, "Mrs")
-    .replaceAll(/\betc\.(?! [A-Z])/giu, "etc")
+    // diverges from kokoro-js on purpose: it keeps the period (a pause) when `etc.` is
+    // inside a sentence; voix only hands over a sentence that continues after `etc.`
+    // when the next word is lowercase prose, so the period is never a sentence end there
+    .replaceAll(/\b[Ee][Tt][Cc]\.(?! [A-Z])/gu, "etc")
     .replaceAll(/\b(?<y>y)eah?\b/giu, "$<y>e'a")
     .replaceAll(
       /\d*\.\d+|\b\d{4}s?\b|(?<!:)\b(?:[1-9]|1[0-2]):[0-5]\d\b(?!:)/gu,
