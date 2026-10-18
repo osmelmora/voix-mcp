@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.2 - 2026-10-18
+#### Bug Fixes
+- (**speaker**) fail synthesis on non-finite audio instead of playing silence - (2e50d9d) - Osmel Mora, *Claude Opus 5.5*
+#### Documentation
+- tell NaN silence from infinite clipping in the non-finite guard - (c530038) - Osmel Mora, *Claude Opus 5.5*
+
+- - -
+
 ## v0.3.1 - 2026-10-17
 #### Bug Fixes
 - (**cli**) validate say --out like playback - (21b703a) - Osmel Mora, *Claude Opus 5.5*
