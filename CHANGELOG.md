@@ -2,6 +2,20 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.4 - 2026-10-18
+#### Bug Fixes
+- (**mcp**) interrupt prepare on a closed provider even after it succeeded - (c4f0c82) - Osmel Mora, *Claude Opus 5.5*
+- (**mcp**) keep model preparation reachable when its first caller is cancelled - (52fd4fc) - Osmel Mora, *Claude Opus 5.5*
+- (**mcp**) stop model preparation when the server shuts down - (e96ac74) - Osmel Mora, *Claude Opus 5.5*
+- (**mcp**) answer every request read before stdin closes, then exit 0 - (5517981) - Osmel Mora, *Claude Opus 5.5*
+- (**model**) never publish a model file that was not written in full - (65c9a1b) - Osmel Mora, *Claude Opus 5.5*
+- (**model**) give every download attempt its own temp file - (83b9d2e) - Osmel Mora, *Claude Opus 5.5*
+#### Documentation
+- record that the minified build still matches on Effect 4.0.5 - (f203521) - Osmel Mora, *Claude Opus 5.5*
+- say that short model writes are retried, not failed - (5136322) - Osmel Mora, *Claude Opus 5.5*
+
+- - -
+
 ## v0.3.3 - 2026-10-18
 #### Bug Fixes
 - (**text**) keep abbreviations inside their sentence - (927be74) - Osmel Mora, *Claude Opus 5.5*

@@ -1,6 +1,6 @@
 {
   "name": "voix",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "Local, model-agnostic voice output primitive for AI agents (MCP + CLI)",
   "bin": {
